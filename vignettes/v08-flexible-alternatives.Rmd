@@ -1,0 +1,188 @@
+---
+title: "Robust, quantile, GAM and kernel alternatives"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Robust, quantile, GAM and kernel alternatives}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.7)
+library(multiRegFlow)
+```
+
+## Alternatives should answer a diagnosed problem
+
+A flexible model is not automatically better than OLS. Different alternatives
+address different departures:
+
+- robust regression reduces the influence of unusual observations;
+- quantile regression changes the target from the conditional mean to a conditional quantile;
+- GAM relaxes linear functional forms while retaining an additive structure;
+- kernel regression provides a more nonparametric conditional-mean estimate.
+
+The first task is therefore to identify why an alternative is scientifically
+useful.
+
+## Robust regression: soil example
+
+```{r}
+soil <- mr_example_data("soil_fertility")
+ols_soil <- mr_fit(
+  yield_t_ha ~ soil_pH + organic_matter_pct + available_P_mg_dm3 +
+    season_rain_mm,
+  soil
+)
+rob_soil <- mr_fit(
+  yield_t_ha ~ soil_pH + organic_matter_pct + available_P_mg_dm3 +
+    season_rain_mm,
+  soil,
+  engine = "robust"
+)
+cbind(OLS = coef(ols_soil), Robust = coef(rob_soil))
+```
+
+Robust regression is best interpreted as a sensitivity analysis when unusual
+observations may disproportionately affect OLS. It should not be used to hide
+valid observations simply because they disagree with the dominant trend.
+
+## Robust regression: plant example
+
+```{r}
+plant <- mr_example_data("plant_growth")
+rob_plant <- mr_fit(
+  biomass_g ~ leaf_area_cm2 + chlorophyll_spad + leaf_N_pct +
+    stomatal_conductance + plant_height_cm,
+  plant,
+  engine = "robust"
+)
+summary(rob_plant)
+```
+
+## Quantile regression: low, median and high yield
+
+```{r}
+het <- mr_example_data("agronomy_heteroskedastic")
+base_het <- mr_fit(
+  grain_yield_t_ha ~ N_rate_kg_ha + P_rate_kg_ha + soil_water_m3_m3,
+  het
+)
+if (requireNamespace("quantreg", quietly = TRUE)) {
+  q25 <- mr_quantile(base_het, tau = 0.25)
+  q50 <- mr_quantile(base_het, tau = 0.50)
+  q75 <- mr_quantile(base_het, tau = 0.75)
+  coef(q25$model)
+  coef(q50$model)
+  coef(q75$model)
+}
+```
+
+The three calls demonstrate that `mr_quantile()` can be used for distinct
+conditional response levels. A single multi-quantile fit is also available.
+
+```{r}
+if (requireNamespace("quantreg", quietly = TRUE)) {
+  q_all <- mr_quantile(base_het, tau = c(0.1, 0.25, 0.5, 0.75, 0.9))
+  summary(q_all$model)
+}
+```
+
+Quantile-specific slopes can be agronomically relevant when nutrient or water
+responses differ between stressed and high-performing environments.
+
+## Detect nonlinear irrigation response
+
+```{r}
+nl <- mr_example_data("irrigation_nonlinear")
+lin <- mr_fit(
+  yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C,
+  nl,
+  goal = "prediction"
+)
+mr_diagnose(lin)$specification
+```
+
+## GAM: interpretable smooth effects
+
+```{r gamfit}
+gam1 <- mr_fit(
+  yield_t_ha ~ s(irrigation_mm) + s(N_rate_kg_ha) + s(mean_temp_C),
+  nl,
+  engine = "gam",
+  goal = "prediction"
+)
+summary(gam1)
+```
+
+```{r gamplot, fig.cap="Estimated smooth response functions in the irrigation GAM."}
+plot(gam1$model, pages = 1, residuals = TRUE)
+```
+
+A second GAM can retain one linear agronomic term and smooth only the variables
+with plausible nonlinear response.
+
+```{r}
+gam2 <- mr_fit(
+  yield_t_ha ~ s(irrigation_mm) + N_rate_kg_ha + s(mean_temp_C) +
+    plant_stand_plants_m2,
+  nl,
+  engine = "gam",
+  goal = "prediction"
+)
+summary(gam2)
+```
+
+## Kernel regression
+
+Kernel regression is useful when the functional form is difficult to specify.
+Bandwidth selection is part of the model and can be computationally expensive.
+The following three examples are kept unevaluated during vignette building to
+avoid long package-installation times; the package validation script executes
+them separately.
+
+```{r, eval=FALSE}
+ker1 <- mr_kernel(lin)
+ker1$bandwidth
+```
+
+```{r, eval=FALSE}
+lin_two <- mr_fit(yield_t_ha ~ irrigation_mm + N_rate_kg_ha, nl)
+ker2 <- mr_kernel(lin_two)
+ker2$model
+```
+
+```{r, eval=FALSE}
+lin_temp <- mr_fit(yield_t_ha ~ irrigation_mm + mean_temp_C, nl)
+ker3 <- mr_kernel(lin_temp, bwmethod = "cv.aic")
+ker3$bandwidth
+```
+
+## Compare OLS, GAM and kernel out of sample
+
+```{r, eval=FALSE}
+ker_fit <- mr_fit(
+  yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C,
+  nl,
+  engine = "kernel",
+  goal = "prediction"
+)
+mr_compare(linear = lin, gam = gam1, kernel = ker_fit,
+           v = 5, repeats = 3, seed = 91)$prediction
+```
+
+The comparison must use out-of-fold predictions. A flexible model can always
+fit training data more closely, but that is not enough to demonstrate improved
+prediction.
+
+## Choosing among alternatives
+
+Use robust regression when the main concern is sensitivity to influential
+observations. Use quantile regression when the scientific target is a conditional
+quantile. Use GAM when smooth nonlinear functional forms are plausible and
+interpretability remains important. Use kernel regression when a less structured
+conditional-mean estimate is justified and sample size supports it.
+
+A single dataset may motivate more than one sensitivity analysis, but every
+additional model should correspond to an explicit scientific or diagnostic
+question.

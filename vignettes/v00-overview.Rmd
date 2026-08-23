@@ -1,0 +1,155 @@
+---
+title: "multiRegFlow: scope, workflow and package map"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{multiRegFlow: scope, workflow and package map}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.5)
+library(multiRegFlow)
+```
+
+## Purpose
+
+`multiRegFlow` is a guided workflow for multiple regression in agricultural,
+soil and plant sciences. It does not replace `lm()`, `glmnet`, `quantreg`,
+`robustbase`, `mgcv`, `np`, or other specialized packages. Its purpose is to
+make the statistical path explicit: define the scientific goal, fit a transparent
+reference model, diagnose the specification, investigate multicollinearity and
+influence, quantify uncertainty, explore selection or shrinkage when justified,
+compare flexible alternatives, validate prediction out of sample, and record the
+reasoning in an auditable report.
+
+The central distinction is between **explanation/inference** and **prediction**.
+An explanatory analysis asks how a response changes conditionally on the terms
+in a scientific model. A predictive analysis asks how accurately new observations
+can be predicted. Selection criteria, uncertainty statements and performance
+metrics must be interpreted differently under these goals.
+
+## Available modules
+
+```{r}
+mr_capabilities()
+```
+
+The capability table also provides a quick check of optional backends installed
+in the current R library.
+
+```{r}
+subset(mr_capabilities(), available)
+```
+
+A third useful view is the set of modules that need optional packages.
+
+```{r}
+subset(mr_capabilities(), !is.na(package) & package != "")
+```
+
+## Teaching datasets
+
+The package ships frozen **synthetic** datasets. They were designed to create
+known teaching situations and must not be represented as observations from real
+field trials.
+
+```{r}
+soil <- mr_example_data("soil_fertility")
+plant <- mr_example_data("plant_growth")
+coll <- mr_example_data("agronomy_collinear")
+str(soil)
+```
+
+```{r}
+nl <- mr_example_data("irrigation_nonlinear")
+het <- mr_example_data("agronomy_heteroskedastic")
+c(n_soil = nrow(soil), n_plant = nrow(plant), n_nonlinear = nrow(nl))
+```
+
+```{r}
+summary(coll[c("N_rate_kg_ha", "N_uptake_kg_ha", "canopy_N_g_m2")])
+```
+
+The five datasets emphasize different questions:
+
+| Dataset | Main teaching purpose |
+|---|---|
+| `soil_fertility` | explanatory OLS, effects, importance and reporting |
+| `plant_growth` | physiology and biomass regression |
+| `agronomy_collinear` | redundant N-status indicators and regularization |
+| `irrigation_nonlinear` | functional-form failure and flexible alternatives |
+| `agronomy_heteroskedastic` | robust covariance and wild bootstrap |
+
+## A minimal explanatory workflow
+
+```{r}
+fit_soil <- mr_fit(
+  yield_t_ha ~ soil_pH + organic_matter_pct + available_P_mg_dm3 +
+    exchangeable_K_mg_dm3 + soil_moisture_pct + season_rain_mm,
+  data = soil,
+  goal = "explanation"
+)
+fit_soil
+```
+
+```{r}
+mr_diagnose(fit_soil)$fit
+mr_collinearity(fit_soil)$VIF
+mr_recommend(fit_soil)
+```
+
+The output is deliberately modular. A single omnibus table can hide the fact
+that model fit, coefficient uncertainty, collinearity and predictive performance
+answer different questions.
+
+## A minimal predictive workflow
+
+```{r}
+fit_pred <- mr_fit(
+  biomass_g ~ leaf_area_cm2 + chlorophyll_spad + leaf_N_pct +
+    stomatal_conductance + plant_height_cm + root_mass_g,
+  data = plant,
+  goal = "prediction"
+)
+mr_validate(fit_pred, v = 5, repeats = 3, seed = 2026)$summary
+```
+
+Out-of-fold predictions are generated without using an observation in the fit
+that predicts that same observation. This is preferable to reporting training
+`R-squared` as predictive evidence.
+
+## Flexible alternatives are sensitivity analyses, not automatic upgrades
+
+```{r}
+fit_nl <- mr_fit(
+  yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C,
+  data = nl,
+  goal = "prediction"
+)
+mr_diagnose(fit_nl)$specification
+```
+
+A significant functional-form screen is a reason to inspect the residual
+pattern and agronomic mechanism. It is not proof that a particular nonlinear
+model is correct. The dedicated flexible-alternatives vignette demonstrates GAM,
+kernel, robust and quantile approaches.
+
+## Recommended reading order
+
+1. `v01-foundations-to-advanced-tutorial.Rmd`
+2. `v02-diagnostics-influence.Rmd`
+3. `v03-collinearity-vif-condition.Rmd`
+4. `v04-selection-stability.Rmd`
+5. `v05-regularization.Rmd`
+6. `v06-bootstrap-resampling.Rmd`
+7. `v07-importance-effects-shap.Rmd`
+8. `v08-flexible-alternatives.Rmd`
+9. `v09-validation-comparison.Rmd`
+10. `v10-soils-case-study.Rmd`
+11. `v11-plant-science-case-study.Rmd`
+12. `v12-reporting-audit.Rmd`
+
+The tutorials intentionally repeat the **workflow logic**, but avoid repeating
+whole sections of methodological discussion. Each vignette has a distinct
+teaching responsibility.

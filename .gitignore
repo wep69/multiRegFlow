@@ -1,0 +1,28 @@
+# R specific
+.Rhistory
+.Rdata
+.RData
+.Ruserdata
+.Rproj.user
+*.Rproj
+
+# Package build artifacts
+doc/
+docs/
+Meta/
+ multiRegFlow.Rcheck/
+00LOCK-*
+*.tar.gz
+
+# Validation artifacts
+validation/
+_checks/
+_checklib_*
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# IDE specific
+.vscode/
+.idea/

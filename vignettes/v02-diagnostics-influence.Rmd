@@ -1,0 +1,160 @@
+---
+title: "Diagnostics, heteroscedasticity and influential observations"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Diagnostics, heteroscedasticity and influential observations}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.7)
+library(multiRegFlow)
+```
+
+## Why diagnostics come before selection
+
+A regression coefficient is meaningful only relative to the fitted
+specification and the observations that support it. Diagnostics therefore come
+before automated selection. This vignette separates four issues: functional
+form, residual variance, unusual response values and unusual predictor
+combinations.
+
+## Example 1: a well-behaved soil model
+
+```{r}
+soil <- mr_example_data("soil_fertility")
+fit_soil <- mr_fit(
+  yield_t_ha ~ soil_pH + organic_matter_pct + available_P_mg_dm3 +
+    exchangeable_K_mg_dm3 + soil_moisture_pct + season_rain_mm,
+  soil
+)
+d1 <- mr_diagnose(fit_soil)
+d1$fit
+d1$heteroscedasticity
+d1$specification
+```
+
+Normality, heteroscedasticity and functional form are different questions.
+Normal residuals do not guarantee constant variance, and constant variance does
+not guarantee that the conditional mean is correctly specified.
+
+## Example 2: intentionally heteroscedastic agronomic data
+
+```{r}
+het <- mr_example_data("agronomy_heteroskedastic")
+fit_het <- mr_fit(
+  grain_yield_t_ha ~ N_rate_kg_ha + P_rate_kg_ha + soil_water_m3_m3,
+  het
+)
+d2 <- mr_diagnose(fit_het)
+d2$heteroscedasticity
+```
+
+When the mean model remains scientifically reasonable, heteroscedasticity can
+be handled at the uncertainty level.
+
+```{r}
+inf_classical <- mr_inference(fit_het, "classical")
+inf_hc3 <- mr_inference(fit_het, "HC3")
+inf_hc4 <- mr_inference(fit_het, "HC4")
+inf_classical[, c("term", "std_error", "p_value")]
+inf_hc3[, c("term", "std_error", "p_value")]
+inf_hc4[, c("term", "std_error", "p_value")]
+```
+
+The coefficients are unchanged because the fitted conditional mean has not
+changed. Only the estimated covariance matrix and resulting uncertainty differ.
+This distinction is important in agronomic field data, where variance often
+changes across fertility or water gradients.
+
+## Example 3: nonlinear irrigation response fitted linearly
+
+```{r}
+nl <- mr_example_data("irrigation_nonlinear")
+fit_lin <- mr_fit(
+  yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C +
+    plant_stand_plants_m2,
+  nl
+)
+d3 <- mr_diagnose(fit_lin)
+d3$specification
+```
+
+The specification screen adds squared and cubic powers of fitted values to the
+linear predictor and evaluates whether they add information. A small p-value is
+not a command to use a GAM; it is evidence that the current linear functional
+form deserves inspection.
+
+## Visual diagnostics
+
+```{r diagplot, fig.cap="Residual and influence diagnostic panels for the heteroscedastic teaching dataset."}
+par(mfrow = c(2, 2))
+plot(fit_het$model)
+par(mfrow = c(1, 1))
+```
+
+Residual-versus-fitted plots are often more informative than a single test.
+Patterns such as a funnel, curvature or systematic bands can point to different
+problems and therefore different responses.
+
+## Influence is multidimensional
+
+```{r}
+i_soil <- mr_influence(fit_soil)
+head(i_soil[order(-i_soil$cooks_distance), ], 6)
+```
+
+```{r}
+i_plant <- mr_influence(mr_fit(
+  biomass_g ~ leaf_area_cm2 + chlorophyll_spad + leaf_N_pct +
+    stomatal_conductance + plant_height_cm + root_mass_g,
+  mr_example_data("plant_growth")
+))
+head(i_plant[order(-i_plant$leverage), ], 6)
+```
+
+```{r}
+i_het <- mr_influence(fit_het)
+with(i_het, table(flag_leverage, flag_cook))
+```
+
+Leverage identifies unusual predictor combinations. Studentized residuals
+identify unusual responses conditional on predictors. Cook's distance measures
+the combined effect of residual size and leverage on the fitted coefficient
+vector. DFFITS focuses on fitted values, while DFBETAS focus on coefficients.
+No single measure should dominate interpretation.
+
+## Sensitivity analysis rather than deletion
+
+A defensible workflow for a flagged observation is:
+
+1. verify the original record and measurement units;
+2. determine whether the observation belongs to the target population;
+3. inspect whether its predictor combination is scientifically plausible;
+4. fit the prespecified model with and without the observation as a sensitivity analysis;
+5. report materially changed conclusions;
+6. exclude the observation only with a documented reason independent of the desired result.
+
+The package deliberately does not implement an `auto_remove_outliers()` function.
+
+## Cluster-robust illustration
+
+```{r}
+het$block <- rep(seq_len(18), length.out = nrow(het))
+fit_cluster <- mr_fit(
+  grain_yield_t_ha ~ N_rate_kg_ha + P_rate_kg_ha + soil_water_m3_m3,
+  het
+)
+mr_inference(fit_cluster, "cluster", cluster = "block")
+```
+
+This artificial cluster variable demonstrates syntax only. Real cluster-robust
+inference must use the true independent sampling or experimental units.
+
+## Interpretation checklist
+
+Before modifying a model, ask whether the signal concerns the conditional mean,
+residual variance, data quality, dependence structure or influential support.
+The same small p-value or large Cook's distance can imply different actions under
+different experimental designs.

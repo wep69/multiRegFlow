@@ -1,0 +1,33 @@
+Package: multiRegFlow
+Type: Package
+Title: Guided Multiple Regression for Agricultural Sciences
+Version: 0.2.0
+Authors@R: c(
+    person("Walter Esfrain", "Pereira", role = c("aut", "cre", "cph"),
+           email = "maintainer@multiregflow.invalid",
+           comment = c(ORCID = "0000-0003-1085-0191")),
+    person("Magali Haidee", "Pereira Martinez", role = "aut",
+           comment = c(ORCID = "0009-0009-5419-959X"))
+    )
+Author: Walter Esfrain Pereira [aut, cre, cph] (ORCID: <https://orcid.org/0000-0003-1085-0191>), Magali Haidee Pereira Martinez [aut] (ORCID: <https://orcid.org/0009-0009-5419-959X>)
+Maintainer: Walter Esfrain Pereira <maintainer@multiregflow.invalid>
+Description: Provides a guided and auditable workflow for multiple linear
+    regression focused on scientific interpretation, diagnostics,
+    multicollinearity, variable selection, resampling, regularization,
+    relative importance, robust covariance inference, flexible alternatives,
+    and out-of-sample predictive validation. The package is designed for
+    agricultural, soil, and plant-science applications and delegates
+    specialized estimation to established R packages when appropriate.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Depends: R (>= 4.2.0)
+Imports: stats, utils, graphics
+Suggests: broom, car, ggplot2, glmnet, kernelshap, knitr, leaps,
+        marginaleffects, MASS, mgcv, mctest, mcvis, np, npreg, olsrr,
+        performance, quantreg, relaimpo, rmarkdown, robustbase,
+        sandwich, shapviz, stabs, testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+RoxygenNote: 7.3.2
+NeedsCompilation: no
+Packaged: 2026-08-22 03:06:34 UTC; wep69

@@ -1,0 +1,5 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^SCIENTIFIC_SCOPE\.md$
+^VIGNETTE_ORGANIZATION\.md$
+^_debug_.*\.R$

@@ -1,0 +1,138 @@
+---
+title: "Multicollinearity: VIF, condition indices and agronomic interpretation"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Multicollinearity: VIF, condition indices and agronomic interpretation}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.6)
+library(multiRegFlow)
+```
+
+## Collinearity is not merely a threshold problem
+
+In agronomy, correlated predictors are often expected. Soil organic matter,
+CEC and clay can co-vary; N rate, N uptake and canopy N represent related
+processes; plant height, leaf area and biomass can track plant vigor. The
+question is not simply whether two predictors correlate, but whether the data
+contain enough independent information to estimate their conditional effects.
+
+For predictor \(X_j\), VIF is based on the coefficient of determination from
+regressing \(X_j\) on the remaining predictors. Large VIF therefore indicates
+that the unique variation available for estimating its slope is limited.
+
+## Example 1: deliberately collinear N-status indicators
+
+```{r}
+d <- mr_example_data("agronomy_collinear")
+fit <- mr_fit(yield_t_ha ~ ., d)
+col <- mr_collinearity(fit)
+col$VIF
+```
+
+```{r}
+head(col$correlations, 10)
+col$condition_index
+```
+
+Variance-decomposition proportions help identify which coefficient dimensions
+are associated with high condition indices.
+
+```{r}
+round(col$variance_decomposition, 3)
+```
+
+A high condition index becomes more informative when two or more variables have
+large variance proportions concentrated in the same high-index dimension.
+
+## Example 2: soil fertility variables
+
+```{r}
+soil <- mr_example_data("soil_fertility")
+fit_soil <- mr_fit(
+  yield_t_ha ~ soil_pH + organic_matter_pct + clay_pct + CEC_cmolc_dm3 +
+    available_P_mg_dm3 + exchangeable_K_mg_dm3 + soil_moisture_pct,
+  soil
+)
+col_soil <- mr_collinearity(fit_soil)
+col_soil$VIF
+head(col_soil$correlations, 8)
+```
+
+Here CEC, clay and organic matter have an agronomic reason to share information.
+If the goal is to estimate the effect of available P while adjusting for soil
+buffering properties, dropping all correlated soil descriptors merely to reduce
+VIF can change the scientific estimand.
+
+## Example 3: plant growth indicators
+
+```{r}
+plant <- mr_example_data("plant_growth")
+fit_plant <- mr_fit(
+  biomass_g ~ leaf_area_cm2 + chlorophyll_spad + leaf_N_pct +
+    stomatal_conductance + plant_height_cm + root_mass_g +
+    specific_leaf_area_cm2_g,
+  plant
+)
+mr_collinearity(fit_plant)$VIF
+```
+
+This third example demonstrates that the same diagnostics can be used when
+predictors represent physiology and morphology rather than soil attributes.
+
+## Why VIF = 5 or 10 is not a universal decision rule
+
+Thresholds are useful for screening, but their practical meaning depends on the
+scientific objective, sample size, effect size, measurement precision and the
+role of the predictor. A high VIF may be acceptable for a nuisance covariate
+that must remain in the model, while it may seriously limit attempts to
+separate the effects of two competing treatments or nutrient indicators.
+
+`multiRegFlow` therefore returns two flags, VIF >= 5 and VIF >= 10, but never
+automatically removes a term.
+
+## Compare OLS with ridge under collinearity
+
+```{r}
+if (requireNamespace("glmnet", quietly = TRUE)) {
+  ridge <- mr_regularize(fit, "ridge", nfolds = 5, seed = 44)
+  ridge$coefficients
+}
+```
+
+Ridge does not make collinearity disappear. It changes the estimation problem by
+shrinking coefficients, which can greatly improve stability and prediction. For
+explanatory work, this makes ridge a useful sensitivity analysis rather than an
+automatic replacement for the prespecified OLS estimand.
+
+## Compare selection stability
+
+```{r, eval=FALSE}
+if (requireNamespace("stabs", quietly = TRUE) &&
+    requireNamespace("glmnet", quietly = TRUE)) {
+  stab <- mr_select(fit, "stability", cutoff = 0.75, PFER = 1)
+  stab$selected
+  sort(stab$selection_probabilities, decreasing = TRUE)
+}
+```
+
+If two correlated indicators alternate across resamples, the instability itself
+is scientifically informative. It suggests that the dataset supports a shared
+signal more strongly than a unique ranking between the indicators.
+
+## Practical decisions
+
+When multicollinearity is substantial, consider:
+
+- retaining scientifically mandatory variables and emphasizing their joint role;
+- choosing one indicator based on measurement quality or biological priority, not p-value alone;
+- creating a justified composite if several measurements represent one construct;
+- using ridge for coefficient stabilization or prediction;
+- using stability selection when variable-screening reproducibility is important;
+- collecting data that separate the predictors more effectively in future experiments.
+
+The final decision should follow the research question rather than an arbitrary
+VIF target.

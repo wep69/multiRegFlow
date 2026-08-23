@@ -1,0 +1,186 @@
+---
+title: "Reporting, audit trails and reproducible regression workflows"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Reporting, audit trails and reproducible regression workflows}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.6)
+library(multiRegFlow)
+```
+
+## Why an audit trail matters
+
+A multiple-regression result is not just a final coefficient table. Reproducible
+analysis requires a record of the scientific goal, candidate variables, model
+formula, diagnostics, treatment of heteroscedasticity, influence assessment,
+selection or regularization decisions, resampling settings and predictive
+validation.
+
+`mr_report()` creates a compact Markdown record from an OLS reference model. It
+is designed to accompany, not replace, scientific interpretation.
+
+## Example 1: explanatory soil report
+
+```{r}
+soil <- mr_example_data("soil_fertility")
+fit_soil <- mr_fit(
+  yield_t_ha ~ soil_pH + organic_matter_pct + clay_pct +
+    available_P_mg_dm3 + exchangeable_K_mg_dm3 +
+    soil_moisture_pct + season_rain_mm,
+  soil,
+  goal = "explanation"
+)
+rep1 <- mr_report(fit_soil)
+cat(substr(rep1, 1, 1600))
+```
+
+When heteroscedasticity is detected and `sandwich` is available, the default
+`vcov = "auto"` changes the reported coefficient uncertainty to HC3 while
+leaving the OLS coefficients unchanged.
+
+## Example 2: explicitly classical report
+
+```{r}
+rep2 <- mr_report(fit_soil, vcov = "classical")
+cat(substr(rep2, 1, 800))
+```
+
+This is useful when the analyst needs to show exactly which covariance estimator
+was used rather than rely on the automatic choice.
+
+## Example 3: predictive report with cross-validation
+
+```{r}
+plant <- mr_example_data("plant_growth")
+fit_pred <- mr_fit(
+  biomass_g ~ leaf_area_cm2 + chlorophyll_spad + leaf_N_pct +
+    stomatal_conductance + plant_height_cm + root_mass_g,
+  plant,
+  goal = "prediction"
+)
+rep3 <- mr_report(fit_pred, validation = TRUE,
+                  v = 5, repeats = 3, seed = 90)
+cat(substr(rep3, 1, 1200))
+```
+
+## Writing the report to disk
+
+```{r}
+tmp1 <- tempfile(fileext = ".md")
+mr_report(fit_soil, file = tmp1)
+file.exists(tmp1)
+```
+
+```{r}
+tmp2 <- tempfile(fileext = ".md")
+mr_report(fit_pred, file = tmp2, validation = TRUE,
+          v = 5, repeats = 2, seed = 91)
+file.info(tmp2)$size
+```
+
+A project workflow can store these reports next to scripts, frozen data and
+session information.
+
+## Recommendation examples
+
+The recommendation engine is most useful when compared across different
+statistical problems.
+
+```{r}
+mr_recommend(fit_soil)
+```
+
+```{r}
+coll <- mr_example_data("agronomy_collinear")
+fit_coll <- mr_fit(yield_t_ha ~ ., coll)
+mr_recommend(fit_coll)
+```
+
+```{r}
+nl <- mr_example_data("irrigation_nonlinear")
+fit_nl <- mr_fit(
+  yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C,
+  nl
+)
+mr_recommend(fit_nl)
+```
+
+The outputs differ because the problems differ. Collinearity motivates
+stability analysis, a functional-form signal motivates nonlinear sensitivity,
+and an explanatory goal discourages treating automated selection as confirmatory.
+
+## Capability audit
+
+```{r}
+cap <- mr_capabilities()
+cap
+```
+
+```{r}
+subset(cap, !available)
+```
+
+```{r}
+table(cap$backend)
+```
+
+This information is useful when a report depends on optional backends that may
+not be installed on another computer.
+
+## Minimum reproducibility record
+
+For an analysis intended for publication or project review, save at least:
+
+- the original or analysis-ready data with provenance;
+- the exact model formula and declared goal;
+- package version and `sessionInfo()`;
+- random seeds for bootstrap and validation;
+- bootstrap type and number of replicates;
+- covariance estimator used for inference;
+- selection criterion, lambda rule or stability-selection settings;
+- all exclusions and transformations with justification;
+- out-of-fold metrics for predictive claims;
+- scripts that regenerate tables and figures.
+
+## Suggested Methods wording
+
+A transparent Methods description should state that multiple linear regression
+was fitted as a reference model, specify the candidate predictors, describe
+residual and influence diagnostics, explain how multicollinearity was evaluated,
+identify any robust covariance or bootstrap analysis, and state whether variable
+selection or regularization was exploratory. Predictive analyses should describe
+cross-validation design and metrics.
+
+## Suggested Results wording
+
+Results should focus on estimates, uncertainty, effect sizes and patterns that
+address the scientific question. Avoid repeating every diagnostic statistic.
+Report material sensitivity to influential observations, covariance estimators,
+selection procedures or flexible alternatives when those analyses change the
+scientific conclusion.
+
+## What the automated report intentionally does not do
+
+`mr_report()` does not infer the experimental design, decide whether a predictor
+is a confounder, convert associations into causal effects, determine biological
+relevance from p-values, or decide whether an influential observation is invalid.
+Those decisions remain the analyst's scientific responsibility.
+
+## Final integrated audit
+
+```{r}
+list(
+  diagnostics = mr_diagnose(fit_soil),
+  collinearity = mr_collinearity(fit_soil)$VIF,
+  importance = mr_importance(fit_soil, "semi_partial_r2"),
+  recommendation = mr_recommend(fit_soil)
+)
+```
+
+This final object demonstrates the package philosophy: preserve separate evidence
+streams and combine them through interpretation rather than collapsing them into
+one automatic score.

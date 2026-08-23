@@ -1,0 +1,197 @@
+---
+title: "Integrated plant-science and crop-growth case study"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Integrated plant-science and crop-growth case study}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.7)
+library(multiRegFlow)
+```
+
+## Scientific setting
+
+The synthetic `plant_growth` dataset links biomass to morphological and
+physiological indicators: leaf area, SPAD chlorophyll index, leaf N,
+stomatal conductance, plant height, root mass and specific leaf area. The
+workflow illustrates how multiple regression can combine measurements from
+plant nutrition, physiology and growth analysis.
+
+```{r}
+d <- mr_example_data("plant_growth")
+head(d)
+```
+
+## Explanatory reference model
+
+```{r}
+fit <- mr_fit(
+  biomass_g ~ leaf_area_cm2 + chlorophyll_spad + leaf_N_pct +
+    stomatal_conductance + plant_height_cm + root_mass_g +
+    specific_leaf_area_cm2_g,
+  d,
+  goal = "explanation"
+)
+summary(fit)
+```
+
+A slope represents a conditional association. For example, the leaf-N slope is
+the expected biomass difference associated with a one-unit difference in leaf N
+when the other included physiological and morphological variables are held
+fixed. This conditional quantity can differ from the marginal correlation
+between leaf N and biomass.
+
+## Model adequacy
+
+```{r}
+mr_diagnose(fit)$fit
+mr_diagnose(fit)$heteroscedasticity
+mr_diagnose(fit)$specification
+```
+
+The three calls emphasize that fit, residual variance and functional form are
+separate aspects of adequacy.
+
+## Influence in multivariate plant measurements
+
+```{r}
+infl <- mr_influence(fit)
+head(infl[order(-infl$cooks_distance), ], 8)
+```
+
+```{r}
+subset(infl, flag_leverage | flag_cook | flag_dffits | flag_dfbeta)
+```
+
+A plant with an unusual combination of leaf area, conductance and root mass may
+have high leverage even if its biomass is not an obvious univariate outlier.
+This is why influence diagnostics are multivariate.
+
+## Collinearity among plant traits
+
+```{r}
+co <- mr_collinearity(fit)
+co$VIF
+head(co$correlations, 10)
+```
+
+Growth traits often share biological information. High collinearity can make it
+difficult to separate a unique plant-height effect from a leaf-area effect even
+when the two traits jointly predict biomass well.
+
+## Importance views
+
+```{r}
+mr_importance(fit, "standardized")
+mr_importance(fit, "partial_r2")
+mr_importance(fit, "semi_partial_r2")
+```
+
+Use the names of the measures in reporting. A standardized slope is not the same
+quantity as unique explained variance.
+
+## Marginal effects
+
+```{r}
+if (requireNamespace("marginaleffects", quietly = TRUE)) {
+  mr_effects(fit, variables = "leaf_N_pct")
+  mr_effects(fit, variables = "chlorophyll_spad")
+  mr_effects(fit, variables = "stomatal_conductance")
+}
+```
+
+## Robust-regression sensitivity
+
+```{r}
+rob <- mr_fit(
+  biomass_g ~ leaf_area_cm2 + chlorophyll_spad + leaf_N_pct +
+    stomatal_conductance + plant_height_cm + root_mass_g +
+    specific_leaf_area_cm2_g,
+  d,
+  engine = "robust"
+)
+cbind(OLS = coef(fit), Robust = coef(rob))
+```
+
+Large changes suggest that a small number of observations may be influential.
+Agreement does not prove the absence of influence, but it provides useful
+sensitivity evidence.
+
+## Regularization for prediction
+
+```{r}
+pred <- mr_fit(
+  biomass_g ~ leaf_area_cm2 + chlorophyll_spad + leaf_N_pct +
+    stomatal_conductance + plant_height_cm + root_mass_g +
+    specific_leaf_area_cm2_g,
+  d,
+  goal = "prediction"
+)
+if (requireNamespace("glmnet", quietly = TRUE)) {
+  ridge <- mr_regularize(pred, "ridge", nfolds = 5, seed = 81)
+  lasso <- mr_regularize(pred, "lasso", nfolds = 5, seed = 81)
+  enet <- mr_regularize(pred, "elastic_net", alpha = 0.5,
+                        nfolds = 5, seed = 81)
+  lasso$selected
+  enet$selected
+}
+```
+
+## Out-of-fold predictive performance
+
+```{r}
+cv <- mr_validate(pred, v = 5, repeats = 4, seed = 82)
+cv$summary
+```
+
+The model should be described as predictive only on the basis of these
+out-of-sample predictions or an independent test dataset, not the training
+`R-squared`.
+
+## Reduced sensor set
+
+Suppose chlorophyll, leaf N, plant height and leaf area are relatively easy to
+collect, while stomatal conductance and root mass are expensive or destructive.
+A smaller predictive model can be evaluated as an operational alternative.
+
+```{r}
+reduced <- mr_fit(
+  biomass_g ~ leaf_area_cm2 + chlorophyll_spad + leaf_N_pct + plant_height_cm,
+  d,
+  goal = "prediction"
+)
+mr_compare(full = pred, reduced = reduced,
+           v = 5, repeats = 3, seed = 83)$prediction
+```
+
+A small loss in accuracy may be acceptable if field measurement becomes much
+simpler. That trade-off should be described explicitly rather than disguised as
+a purely statistical model-selection decision.
+
+## Bootstrap coefficient stability
+
+```{r}
+b <- mr_bootstrap(fit, R = 220, type = "pairs", seed = 84)
+b$intervals
+sort(b$sign_stability)
+```
+
+## Integrated recommendation
+
+```{r}
+mr_recommend(fit)
+```
+
+The output is intended to support a methods discussion: whether traits are
+redundant, whether robust regression changes conclusions, whether the mean
+functional form is adequate and whether predictive claims have been validated.
+
+## Reporting language
+
+A plant-science manuscript should identify the experimental unit, growth stage,
+measurement method and units for each predictor. Statistical results should
+emphasize effect estimates and uncertainty, avoid causal language unsupported by
+design, and distinguish explanatory models from sensor-based predictive models.

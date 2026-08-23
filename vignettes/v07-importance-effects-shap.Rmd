@@ -1,0 +1,174 @@
+---
+title: "Importance, effect size, marginal effects and SHAP"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Importance, effect size, marginal effects and SHAP}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.7)
+library(multiRegFlow)
+```
+
+## There is no single universal definition of importance
+
+Researchers often ask which predictor is "most important". That question is
+underspecified. A large standardized slope, a large unique contribution to
+`R-squared`, a high LMG decomposition and a large average absolute SHAP value can
+rank variables differently because they describe different properties of the
+fitted model.
+
+This vignette keeps these meanings separate.
+
+## Soil-fertility model
+
+```{r}
+soil <- mr_example_data("soil_fertility")
+fit <- mr_fit(
+  yield_t_ha ~ soil_pH + organic_matter_pct + clay_pct +
+    available_P_mg_dm3 + exchangeable_K_mg_dm3 +
+    soil_moisture_pct + season_rain_mm,
+  soil
+)
+```
+
+## Example 1: standardized coefficients
+
+```{r}
+std <- mr_importance(fit, "standardized")
+std[order(-abs(std$standardized_beta)), ]
+```
+
+A standardized coefficient expresses the conditional slope after scaling the
+predictor and response by their standard deviations. It is still a coefficient
+from the specified regression model and remains sensitive to collinearity.
+
+## Example 2: partial R-squared
+
+```{r}
+pr2 <- mr_importance(fit, "partial_r2")
+pr2[order(-pr2$partial_R2), ]
+```
+
+For a one-degree-of-freedom coefficient, partial R-squared describes the fraction
+of residual variation associated with that coefficient after accounting for the
+remaining model. It is closely related to the coefficient t statistic.
+
+## Example 3: semi-partial R-squared
+
+```{r}
+spr2 <- mr_importance(fit, "semi_partial_r2")
+spr2[order(-spr2$semi_partial_R2), ]
+```
+
+Semi-partial R-squared measures the reduction in total response variation when a
+term is added to a model that already contains the other terms. Because it uses
+term-level deletion, it is useful for multi-degree-of-freedom terms as well as
+simple slopes.
+
+## LMG relative importance
+
+```{r}
+if (requireNamespace("relaimpo", quietly = TRUE)) {
+  lmg <- mr_importance(fit, "lmg")
+  lmg$lmg
+}
+```
+
+LMG averages the incremental contribution to `R-squared` over predictor orderings.
+It is especially useful when predictors share explained variation. It remains a
+descriptive decomposition of model fit rather than a causal ranking.
+
+## SHAP for the additive linear model
+
+```{r}
+if (requireNamespace("kernelshap", quietly = TRUE)) {
+  sh <- mr_importance(fit, "shap")
+  head(sh$S)
+  sort(colMeans(abs(sh$S)), decreasing = TRUE)
+}
+```
+
+For an additive linear model, the package delegates to the efficient additive
+SHAP route. Model-agnostic Kernel SHAP would be unnecessarily expensive here.
+SHAP contributions describe model predictions relative to a baseline. A large
+SHAP value does not establish that changing the predictor will cause the
+predicted response to change by the same amount.
+
+## Marginal effects: soil example
+
+```{r}
+if (requireNamespace("marginaleffects", quietly = TRUE)) {
+  mr_effects(fit, variables = "available_P_mg_dm3")
+}
+```
+
+## Marginal effects: rainfall example
+
+```{r}
+if (requireNamespace("marginaleffects", quietly = TRUE)) {
+  mr_effects(fit, variables = "season_rain_mm")
+}
+```
+
+## Marginal effects: plant-science example
+
+```{r}
+plant <- mr_example_data("plant_growth")
+fit_plant <- mr_fit(
+  biomass_g ~ leaf_area_cm2 + chlorophyll_spad + leaf_N_pct +
+    stomatal_conductance + plant_height_cm + root_mass_g,
+  plant
+)
+if (requireNamespace("marginaleffects", quietly = TRUE)) {
+  mr_effects(fit_plant, variables = c("leaf_N_pct", "chlorophyll_spad"))
+}
+```
+
+For a purely additive linear model, average slopes equal the corresponding
+coefficients. The distinction becomes more valuable for interactions and
+nonlinear models.
+
+## Interaction example
+
+```{r}
+fit_int <- mr_fit(
+  yield_t_ha ~ available_P_mg_dm3 * soil_moisture_pct +
+    organic_matter_pct + season_rain_mm,
+  soil
+)
+summary(fit_int)
+```
+
+With an interaction, the coefficient of available P no longer represents one
+constant P effect across all soil moisture levels. Marginal-effect tools can
+summarize the average slope or evaluate the slope at meaningful moisture values.
+
+```{r}
+if (requireNamespace("marginaleffects", quietly = TRUE)) {
+  mr_effects(fit_int, variables = "available_P_mg_dm3")
+}
+```
+
+## Compare importance under collinearity
+
+```{r}
+coll <- mr_example_data("agronomy_collinear")
+fit_coll <- mr_fit(yield_t_ha ~ ., coll)
+mr_importance(fit_coll, "standardized")
+mr_importance(fit_coll, "semi_partial_r2")
+```
+
+Under strong collinearity, unique-contribution measures can become small even
+when a group of predictors jointly carries substantial information. This is one
+reason not to interpret importance rankings without the collinearity analysis.
+
+## Reporting recommendations
+
+State exactly which definition of importance is used. Report uncertainty where
+available. Avoid phrases such as "X caused most of the yield variation" when the
+analysis only supports a model-based descriptive ranking. When predictors have
+different units or belong to correlated groups, show more than one importance
+view and explain why rankings differ.

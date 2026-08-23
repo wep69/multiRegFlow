@@ -1,0 +1,429 @@
+---
+title: "Foundations to advanced multiple regression in agricultural sciences"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Foundations to advanced multiple regression in agricultural sciences}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.8)
+library(multiRegFlow)
+```
+
+## 1. Begin with the scientific question
+
+Multiple regression is most useful when the model is connected to a scientific
+question. Consider a synthetic soil-fertility dataset in which crop yield is
+related to soil reaction, organic matter, texture, available nutrients, soil
+water and seasonal rainfall.
+
+```{r}
+soil <- mr_example_data("soil_fertility")
+head(soil)
+```
+
+If the objective is to estimate conditional associations and quantify
+uncertainty, declare an explanatory goal.
+
+```{r}
+fit <- mr_fit(
+  yield_t_ha ~ soil_pH + organic_matter_pct + clay_pct +
+    available_P_mg_dm3 + exchangeable_K_mg_dm3 +
+    soil_moisture_pct + season_rain_mm,
+  data = soil,
+  goal = "explanation"
+)
+summary(fit)
+```
+
+A slope is interpreted conditionally on the remaining terms. For example, the
+coefficient of available P describes the expected change in yield per unit of P
+when the other predictors in the model are held fixed. This is not automatically
+a causal effect. Causal interpretation requires design and assumptions that go
+beyond a regression coefficient.
+
+## 2. Fit is not adequacy
+
+`R-squared` describes variation explained in the observed sample. It does not
+establish linearity, constant residual variance, absence of influential points,
+or transportability to future observations.
+
+```{r}
+dg <- mr_diagnose(fit)
+dg$fit
+dg$rank
+```
+
+The package also reports a Breusch-Pagan screen and a fitted-value-power
+specification screen.
+
+```{r}
+dg$heteroscedasticity
+dg$specification
+```
+
+These are screening tools. A small p-value does not dictate a unique repair.
+The next step should depend on the observed residual pattern and the agronomic
+mechanism that could create it.
+
+## 3. Inspect residuals and influence
+
+```{r fig1, fig.cap="Standard OLS diagnostic plots for the soil-fertility reference model."}
+par(mfrow = c(2, 2))
+plot(fit$model)
+par(mfrow = c(1, 1))
+```
+
+Observation-level influence diagnostics can be ranked without automatically
+deleting any observation.
+
+```{r}
+infl <- mr_influence(fit)
+head(infl[order(-infl$cooks_distance), ], 8)
+```
+
+The flags correspond to transparent screening cutoffs for leverage, Cook's
+distance, DFFITS and DFBETA. A flagged observation can be scientifically
+important precisely because it represents a rare soil-climate combination.
+Sensitivity analyses should therefore compare conclusions with and without the
+observation while preserving the original analysis unless a documented data
+error or design-based exclusion exists.
+
+## 4. Multicollinearity is about information
+
+Agronomic predictors frequently describe overlapping processes. The dedicated
+collinear dataset contains N rate, N uptake and canopy N, which are biologically
+related.
+
+```{r}
+coll <- mr_example_data("agronomy_collinear")
+fit_coll <- mr_fit(yield_t_ha ~ ., data = coll)
+co <- mr_collinearity(fit_coll)
+co$VIF
+```
+
+```{r}
+co$condition_index
+head(co$correlations, 6)
+```
+
+VIF quantifies how much coefficient variance is inflated by linear dependence
+among predictors. Condition indices and variance-decomposition proportions help
+identify multivariable dependency patterns. The package does not use a rule such
+as "VIF > 10, therefore delete the variable". The scientific role of each
+predictor matters.
+
+## 5. Classical and robust covariance inference
+
+When the conditional mean model is defensible but residual variance is not
+constant, robust covariance estimation can protect coefficient inference without
+changing the fitted mean.
+
+```{r}
+het <- mr_example_data("agronomy_heteroskedastic")
+fit_het <- mr_fit(
+  grain_yield_t_ha ~ N_rate_kg_ha + P_rate_kg_ha + soil_water_m3_m3,
+  data = het
+)
+mr_diagnose(fit_het)$heteroscedasticity
+```
+
+```{r}
+classical <- mr_inference(fit_het, vcov = "classical")
+hc3 <- mr_inference(fit_het, vcov = "HC3")
+merge(classical[, c("term", "std_error")],
+      hc3[, c("term", "std_error")], by = "term",
+      suffixes = c("_classical", "_HC3"))
+```
+
+Cluster-robust covariance is useful when observations share a known grouping
+unit and the independence assumption applies at the cluster rather than the
+individual-observation level.
+
+```{r}
+het$block <- rep(seq_len(18), length.out = nrow(het))
+fit_block <- mr_fit(
+  grain_yield_t_ha ~ N_rate_kg_ha + P_rate_kg_ha + soil_water_m3_m3,
+  data = het
+)
+mr_inference(fit_block, vcov = "cluster", cluster = "block")
+```
+
+The synthetic `block` variable here is only a teaching device. In a real
+experiment, clustering must follow the actual sampling or experimental design.
+
+## 6. Selection is exploratory unless justified otherwise
+
+AIC and BIC can help compare candidate specifications.
+
+```{r}
+aic_sel <- mr_select(fit, method = "aic")
+bic_sel <- mr_select(fit, method = "bic")
+aic_sel$selected
+bic_sel$selected
+```
+
+Scientifically required covariates can be retained during stepwise exploration.
+
+```{r}
+keep_sel <- mr_select(fit, method = "aic",
+                      keep = c("available_P_mg_dm3", "season_rain_mm"))
+keep_sel$selected
+```
+
+For confirmatory inference, the uncertainty generated by searching many models
+is not captured by the ordinary p-values in the selected model. Prespecification,
+validation and sensitivity analyses are preferable to treating a data-driven
+stepwise model as if it had been fixed in advance.
+
+## 7. Best subsets and stability
+
+```{r}
+if (requireNamespace("leaps", quietly = TRUE)) {
+  bs <- mr_select(fit, method = "best_subset")
+  bs$variables_by_bic
+  bs$variables_by_adjr2
+}
+```
+
+Stability selection uses repeated subsampling with a selection procedure and is
+especially valuable when the question is whether a predictor is repeatedly
+selected rather than merely selected once.
+
+```{r, eval=FALSE}
+st <- mr_select(fit_coll, method = "stability", cutoff = 0.75, PFER = 1)
+st$selected
+st$selection_probabilities
+```
+
+## 8. Regularization for correlated predictors
+
+Ridge shrinks correlated coefficients toward zero without forcing them to zero.
+Lasso can set coefficients exactly to zero. Elastic net combines both penalties.
+
+```{r}
+if (requireNamespace("glmnet", quietly = TRUE)) {
+  ridge <- mr_regularize(fit_coll, "ridge", nfolds = 5, seed = 100)
+  lasso <- mr_regularize(fit_coll, "lasso", nfolds = 5, seed = 100)
+  enet <- mr_regularize(fit_coll, "elastic_net", alpha = 0.5,
+                        nfolds = 5, seed = 100)
+  ridge$lambda_1se
+  lasso$selected
+  enet$selected
+}
+```
+
+```{r regplot, fig.cap="Cross-validation curve for lasso in the collinear agronomic example."}
+if (exists("lasso")) plot(lasso$model)
+```
+
+For highly correlated measurements of the same biological process, ridge is
+often useful as a coefficient-stabilization sensitivity analysis. Lasso can be
+unstable with strongly correlated predictors because it may choose one member
+of a group and ignore another with similar information.
+
+## 9. Bootstrap uncertainty
+
+Pairs bootstrap resamples complete observational units and naturally carries the
+observed predictor distribution into each replicate.
+
+```{r}
+boot_pairs <- mr_bootstrap(fit, R = 200, type = "pairs", seed = 7)
+boot_pairs$intervals
+```
+
+Residual bootstrap holds the design matrix fixed and resamples residuals.
+
+```{r}
+boot_res <- mr_bootstrap(fit, R = 200, type = "residual", seed = 7)
+boot_res$sign_stability
+```
+
+Wild bootstrap is useful when the residual variance changes with the predictors.
+
+```{r}
+boot_wild <- mr_bootstrap(fit_het, R = 200, type = "wild", seed = 7)
+boot_wild$intervals
+```
+
+For publication-quality inference, use more replicates than the tutorial uses
+for speed and examine Monte Carlo stability.
+
+## 10. Different definitions of importance
+
+A standardized slope compares predictors on a standard-deviation scale.
+Partial R-squared measures the proportion of residual variance attributable to
+a coefficient conditional on the other terms. Semi-partial R-squared measures
+the unique contribution of a term to total response variation.
+
+```{r}
+mr_importance(fit, "standardized")
+mr_importance(fit, "partial_r2")
+mr_importance(fit, "semi_partial_r2")
+```
+
+LMG importance decomposes model R-squared across predictor orderings.
+
+```{r}
+if (requireNamespace("relaimpo", quietly = TRUE)) {
+  lmg <- mr_importance(fit, "lmg")
+  lmg$lmg
+}
+```
+
+SHAP provides an additive contribution scale useful when comparing explanatory
+patterns across model classes. It should not be re-labelled as a causal effect.
+
+```{r}
+if (requireNamespace("kernelshap", quietly = TRUE)) {
+  sh <- mr_importance(fit, "shap")
+  head(sh$S)
+}
+```
+
+## 11. Marginal effects
+
+Marginal effects are especially useful when the fitted specification contains
+interactions or nonlinear terms.
+
+```{r}
+if (requireNamespace("marginaleffects", quietly = TRUE)) {
+  mr_effects(fit, variables = "available_P_mg_dm3")
+}
+```
+
+```{r}
+if (requireNamespace("marginaleffects", quietly = TRUE)) {
+  mr_effects(fit, variables = "season_rain_mm")
+}
+```
+
+## 12. When the linear functional form is inadequate
+
+The irrigation dataset contains nonlinear response surfaces.
+
+```{r}
+nl <- mr_example_data("irrigation_nonlinear")
+lin_nl <- mr_fit(
+  yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C +
+    plant_stand_plants_m2,
+  data = nl,
+  goal = "prediction"
+)
+mr_diagnose(lin_nl)$specification
+```
+
+A GAM can preserve a structured additive interpretation while allowing smooth
+responses.
+
+```{r}
+gam_nl <- mr_fit(
+  yield_t_ha ~ s(irrigation_mm) + s(N_rate_kg_ha) + s(mean_temp_C),
+  data = nl,
+  engine = "gam",
+  goal = "prediction"
+)
+summary(gam_nl)
+```
+
+Kernel regression is more flexible but can become difficult to interpret in
+higher dimensions. Its bandwidth selection can also be computationally costly.
+
+```{r, eval=FALSE}
+ker_nl <- mr_kernel(lin_nl)
+ker_nl$bandwidth
+```
+
+## 13. Quantile regression for low- and high-response conditions
+
+```{r}
+if (requireNamespace("quantreg", quietly = TRUE)) {
+  qfit <- mr_quantile(fit_het, tau = c(0.25, 0.5, 0.75))
+  summary(qfit$model)
+}
+```
+
+A predictor can have a different association in low-yield environments than in
+high-yield environments. Quantile regression estimates these conditional
+relationships without reducing the response to its conditional mean.
+
+## 14. Prediction requires out-of-sample evidence
+
+```{r}
+fit_pred <- mr_fit(
+  yield_t_ha ~ soil_pH + organic_matter_pct + available_P_mg_dm3 +
+    exchangeable_K_mg_dm3 + soil_moisture_pct + season_rain_mm,
+  data = soil,
+  goal = "prediction"
+)
+cv <- mr_validate(fit_pred, v = 5, repeats = 3, seed = 42)
+cv$summary
+```
+
+Calibration slope near one means that the spread of predictions is reasonably
+aligned with the spread of observed responses. Calibration intercept near zero
+means that average predictions are not substantially shifted.
+
+## 15. Compare models without mixing criteria
+
+```{r}
+small <- mr_fit(
+  yield_t_ha ~ organic_matter_pct + available_P_mg_dm3 + season_rain_mm,
+  soil, goal = "prediction"
+)
+cmp <- mr_compare(full = fit_pred, reduced = small,
+                  v = 5, repeats = 3, seed = 42)
+cmp$inference
+cmp$prediction
+```
+
+A model may have a better AIC and still fail to improve predictive RMSE. The
+package keeps these two evidence streams separate.
+
+## 16. An integrated recommendation
+
+```{r}
+mr_recommend(fit_coll)
+mr_recommend(fit_het)
+mr_recommend(lin_nl)
+```
+
+The recommendation engine is intentionally conservative. It identifies signals
+and reasonable sensitivity analyses but does not choose a scientifically correct
+model on behalf of the analyst.
+
+## 17. Reproducible reporting
+
+```{r}
+report_text <- mr_report(fit)
+cat(substr(report_text, 1, 1200))
+```
+
+For a predictive analysis, validation can be included automatically.
+
+```{r}
+report_pred <- mr_report(fit_pred, validation = TRUE,
+                         v = 5, repeats = 2, seed = 42)
+cat(substr(report_pred, 1, 500))
+```
+
+## 18. Practical decision sequence
+
+A defensible workflow for many agronomic multiple-regression problems is:
+
+1. define the observational or experimental unit;
+2. define the response and scientifically motivated predictors;
+3. state whether the principal goal is explanation or prediction;
+4. fit the OLS reference model;
+5. inspect functional form, residual variance and influential observations;
+6. evaluate collinearity as an information problem, not as a mechanical deletion rule;
+7. use robust covariance or bootstrap when the mean specification is adequate but variance assumptions are doubtful;
+8. treat automated selection as exploratory unless stronger methodology is used;
+9. use ridge, lasso or elastic net when shrinkage is scientifically useful;
+10. compare GAM, kernel, robust or quantile models only when the scientific question motivates them;
+11. validate predictive claims out of sample;
+12. report effect estimates, uncertainty, sensitivity analyses and limitations together.
+
+This sequence is the organizing principle of the remaining vignettes.

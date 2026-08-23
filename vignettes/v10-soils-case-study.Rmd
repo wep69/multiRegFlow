@@ -1,0 +1,193 @@
+---
+title: "Integrated soil-fertility case study"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Integrated soil-fertility case study}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.7)
+library(multiRegFlow)
+```
+
+## Scientific setting
+
+This vignette treats the synthetic `soil_fertility` data as a teaching analogue
+of an observational agronomic dataset. The response is crop yield in t/ha and
+the candidate predictors represent soil pH, organic matter, clay, CEC,
+available P, exchangeable K, soil moisture and seasonal rainfall.
+
+The data are synthetic. The interpretation below illustrates workflow, not a
+claim about a real site or crop.
+
+```{r}
+d <- mr_example_data("soil_fertility")
+summary(d)
+```
+
+## Question 1: conditional nutrient and soil associations
+
+```{r}
+fit <- mr_fit(
+  yield_t_ha ~ soil_pH + organic_matter_pct + clay_pct + CEC_cmolc_dm3 +
+    available_P_mg_dm3 + exchangeable_K_mg_dm3 +
+    soil_moisture_pct + season_rain_mm,
+  d,
+  goal = "explanation"
+)
+summary(fit)
+```
+
+The coefficient table should be read together with uncertainty and model
+adequacy. A small p-value is not the sole criterion for retaining a soil
+variable, particularly when it represents an adjustment factor or a process that
+is scientifically required.
+
+## Diagnostics
+
+```{r}
+dg <- mr_diagnose(fit)
+dg$fit
+dg$heteroscedasticity
+dg$specification
+```
+
+```{r}
+inf <- mr_influence(fit)
+head(inf[order(-inf$cooks_distance), ], 8)
+```
+
+The influential-observation table should trigger data verification and
+sensitivity analysis, not automatic deletion.
+
+## Collinearity among soil descriptors
+
+```{r}
+co <- mr_collinearity(fit)
+co$VIF
+head(co$correlations, 10)
+```
+
+CEC, clay and organic matter can share information because cation exchange
+capacity is related to mineral and organic colloids. A high VIF in a real soil
+dataset could therefore reflect a genuine soil process rather than a defective
+variable.
+
+## Coefficient inference
+
+```{r}
+mr_inference(fit, "classical")
+```
+
+```{r}
+mr_inference(fit, "HC3")
+```
+
+```{r}
+mr_inference(fit, "HC4")
+```
+
+The three calls illustrate classical and two heteroscedasticity-consistent
+covariance estimators. Robust covariance does not change the OLS coefficient;
+it changes the estimated uncertainty.
+
+## Importance from three perspectives
+
+```{r}
+mr_importance(fit, "standardized")
+mr_importance(fit, "partial_r2")
+mr_importance(fit, "semi_partial_r2")
+```
+
+These measures can rank variables differently. The reporting language should
+name the measure rather than stating that a variable is simply "the most
+important".
+
+## Marginal effects
+
+```{r}
+if (requireNamespace("marginaleffects", quietly = TRUE)) {
+  mr_effects(fit, variables = "available_P_mg_dm3")
+  mr_effects(fit, variables = "organic_matter_pct")
+  mr_effects(fit, variables = "season_rain_mm")
+}
+```
+
+For this additive linear specification, these average slopes reproduce the
+corresponding conditional slopes. The same interface becomes more informative
+with interactions and nonlinear terms.
+
+## Selection as sensitivity analysis
+
+```{r}
+aic <- mr_select(fit, "aic")
+bic <- mr_select(fit, "bic")
+aic$selected
+bic$selected
+```
+
+```{r}
+if (requireNamespace("leaps", quietly = TRUE)) {
+  best <- mr_select(fit, "best_subset")
+  best$variables_by_bic
+}
+```
+
+The selected set should be compared with the scientifically prespecified model.
+A variable that disappears under BIC is not thereby biologically irrelevant.
+
+## Bootstrap stability
+
+```{r}
+b <- mr_bootstrap(fit, R = 250, type = "pairs", seed = 71)
+b$intervals
+sort(b$sign_stability)
+```
+
+This table helps identify coefficients whose direction is stable across
+resampled datasets and those whose uncertainty is substantial.
+
+## Prediction-oriented refit
+
+If the objective changes to prediction, the same predictor set should be judged
+out of sample.
+
+```{r}
+pred_fit <- mr_fit(
+  yield_t_ha ~ soil_pH + organic_matter_pct + clay_pct + CEC_cmolc_dm3 +
+    available_P_mg_dm3 + exchangeable_K_mg_dm3 +
+    soil_moisture_pct + season_rain_mm,
+  d,
+  goal = "prediction"
+)
+mr_validate(pred_fit, v = 5, repeats = 4, seed = 72)$summary
+```
+
+## A reduced predictive model
+
+```{r}
+reduced <- mr_fit(
+  yield_t_ha ~ organic_matter_pct + available_P_mg_dm3 + season_rain_mm,
+  d,
+  goal = "prediction"
+)
+mr_compare(full = pred_fit, reduced = reduced,
+           v = 5, repeats = 3, seed = 73)$prediction
+```
+
+A reduced model that predicts similarly may be attractive for operational soil
+sampling because fewer measurements are needed. That operational argument is
+different from claiming that excluded soil variables have no scientific role.
+
+## Reporting template
+
+A concise soil-regression results section should report the response and units,
+model formula, sample size, coefficient estimates with uncertainty, diagnostics,
+collinearity evidence, influential-observation sensitivity, any selection or
+shrinkage analysis, and out-of-sample performance if prediction is claimed.
+
+```{r}
+cat(substr(mr_report(fit), 1, 1200))
+```
