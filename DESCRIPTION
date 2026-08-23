@@ -19,6 +19,8 @@ Description: Provides a guided and auditable workflow for multiple linear
     agricultural, soil, and plant-science applications and delegates
     specialized estimation to established R packages when appropriate.
 License: MIT + file LICENSE
+URL: https://wep69.github.io/multiRegFlow/, https://github.com/wep69/multiRegFlow
+BugReports: https://github.com/wep69/multiRegFlow/issues
 Encoding: UTF-8
 Depends: R (>= 4.2.0)
 Imports: stats, utils, graphics

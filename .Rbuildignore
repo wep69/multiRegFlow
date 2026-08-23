@@ -4,3 +4,5 @@
 ^VIGNETTE_ORGANIZATION\.md$
 ^_debug_.*\.R$
 ^cheatsheets$
+^_pkgdown\.yml$
+^docs$

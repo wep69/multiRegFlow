@@ -1,0 +1,101 @@
+url: https://wep69.github.io/multiRegFlow/
+
+template:
+  bootstrap: 5
+  bootswatch: cosmo
+
+navbar:
+  structure:
+    left:  [intro, reference, articles, news]
+    right: [search, github]
+  components:
+    github:
+      icon: fa-github
+      href: https://github.com/wep69/multiRegFlow
+      aria-label: GitHub
+
+reference:
+  - title: "Package Overview"
+    desc: "Package documentation and overview"
+    contents:
+      - multiRegFlow-package
+
+  - title: "Core Workflow"
+    desc: "Main functions for fitting and diagnosing models"
+    contents:
+      - mr_fit
+      - mr_diagnose
+      - mr_influence
+      - mr_collinearity
+      - mr_inference
+      - mr_recommend
+
+  - title: "Variable Selection"
+    desc: "Functions for selecting and regularizing variables"
+    contents:
+      - mr_select
+      - mr_regularize
+
+  - title: "Resampling"
+    desc: "Bootstrap and cross-validation functions"
+    contents:
+      - mr_bootstrap
+      - mr_validate
+
+  - title: "Importance and Effects"
+    desc: "Functions for measuring variable importance"
+    contents:
+      - mr_importance
+      - mr_effects
+
+  - title: "Flexible Alternatives"
+    desc: "Non-OLS regression engines"
+    contents:
+      - mr_quantile
+      - mr_kernel
+
+  - title: "Comparison and Reporting"
+    desc: "Functions for comparing models and generating reports"
+    contents:
+      - mr_compare
+      - mr_report
+      - mr_capabilities
+      - mr_example_data
+
+articles:
+  - title: "Getting Started"
+    contents:
+      - v00-overview
+      - v01-foundations-to-advanced-tutorial
+
+  - title: "Diagnostics and Inference"
+    contents:
+      - v02-diagnostics-influence
+      - v03-collinearity-vif-condition
+
+  - title: "Selection and Regularization"
+    contents:
+      - v04-selection-stability
+      - v05-regularization
+
+  - title: "Resampling and Validation"
+    contents:
+      - v06-bootstrap-resampling
+      - v09-validation-comparison
+
+  - title: "Importance and Effects"
+    contents:
+      - v07-importance-effects-shap
+
+  - title: "Flexible Alternatives"
+    contents:
+      - v08-flexible-alternatives
+
+  - title: "Case Studies"
+    contents:
+      - v10-soils-case-study
+      - v11-plant-science-case-study
+
+  - title: "Reporting"
+    contents:
+      - v12-reporting-audit
