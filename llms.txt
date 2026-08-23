@@ -1,0 +1,346 @@
+# multiRegFlow
+
+`multiRegFlow` provides a guided, auditable workflow for multiple
+regression in agricultural, soil and plant sciences. The package keeps
+ordinary least squares as a transparent reference model and connects it
+to diagnostics, multicollinearity analysis, robust covariance inference,
+variable selection, regularization, bootstrap, relative importance,
+flexible alternatives and out-of-sample validation.
+
+## Design principle
+
+The package separates two goals that are often mixed in applied
+analysis:
+
+- **explanation/inference**: estimate conditional associations and
+  uncertainty under a scientifically defined model;
+- **prediction**: evaluate how accurately the response can be predicted
+  for observations not used during model fitting.
+
+Automated selection is treated as exploratory by default. VIF thresholds
+do not trigger automatic variable deletion. Predictive performance is
+computed from out-of-fold predictions rather than training fit.
+
+## Core workflow
+
+``` r
+
+library(multiRegFlow)
+
+soil <- mr_example_data("soil_fertility")
+
+fit <- mr_fit(
+  yield_t_ha ~ soil_pH + organic_matter_pct + clay_pct +
+    available_P_mg_dm3 + exchangeable_K_mg_dm3 +
+    soil_moisture_pct + season_rain_mm,
+  soil,
+  goal = "explanation"
+)
+
+mr_diagnose(fit)
+mr_influence(fit)
+mr_collinearity(fit)
+mr_inference(fit, "HC3")
+mr_importance(fit, "semi_partial_r2")
+mr_recommend(fit)
+```
+
+## Selection and shrinkage
+
+``` r
+
+mr_select(fit, "aic")
+mr_select(fit, "bic")
+
+coll <- mr_example_data("agronomy_collinear")
+fit_coll <- mr_fit(yield_t_ha ~ ., coll)
+
+mr_regularize(fit_coll, "ridge")
+mr_regularize(fit_coll, "lasso")
+mr_regularize(fit_coll, "elastic_net", alpha = 0.5)
+```
+
+## Bootstrap and robust covariance
+
+``` r
+
+mr_bootstrap(fit, R = 2000, type = "pairs")
+
+het <- mr_example_data("agronomy_heteroskedastic")
+fit_het <- mr_fit(
+  grain_yield_t_ha ~ N_rate_kg_ha + P_rate_kg_ha + soil_water_m3_m3,
+  het
+)
+
+mr_inference(fit_het, "HC3")
+mr_bootstrap(fit_het, R = 2000, type = "wild")
+```
+
+## Flexible alternatives
+
+``` r
+
+mr_fit(..., engine = "robust")
+mr_fit(..., engine = "quantile", tau = 0.5)
+mr_fit(..., engine = "gam")
+mr_fit(..., engine = "kernel")
+```
+
+Specialized estimation is delegated to established packages such as
+`robustbase`, `quantreg`, `mgcv`, `np`, `glmnet`, `stabs`, `sandwich`,
+`relaimpo`, `kernelshap` and `marginaleffects`.
+
+## Prediction and comparison
+
+``` r
+
+pred_fit <- mr_fit(
+  yield_t_ha ~ organic_matter_pct + available_P_mg_dm3 + season_rain_mm,
+  soil,
+  goal = "prediction"
+)
+
+mr_validate(pred_fit, v = 10, repeats = 5, seed = 123)
+```
+
+[`mr_compare()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+reports inferential fit and out-of-sample predictive metrics in separate
+tables.
+
+## Synthetic teaching datasets
+
+Five frozen datasets are included:
+
+- `soil_fertility`
+- `plant_growth`
+- `agronomy_collinear`
+- `irrigation_nonlinear`
+- `agronomy_heteroskedastic`
+
+They are synthetic and intended only for teaching, testing and
+reproducible examples.
+
+## Documentation
+
+The package includes 13 English vignettes organized from overview and
+foundations to diagnostics, collinearity, selection, regularization,
+bootstrap, importance, flexible alternatives, predictive validation,
+soil and plant-science case studies, and reporting/audit trails.
+
+## Validation
+
+The source tree includes `LOCAL_VALIDATION.md` and
+`VALIDATION_STATUS.md`. The local validation workflow executes package
+examples, optional backends, vignette rendering, `R CMD build`, and
+`R CMD check --as-cran`.
+
+## Maintainer metadata
+
+The current development source uses `maintainer@multiregflow.invalid` as
+an explicit placeholder. Replace it with a verified maintainer email
+before CRAN submission or public release.
+
+# Package index
+
+## Package Overview
+
+Package documentation and overview
+
+- [`multiRegFlow-package`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow-package.md)
+  : multiRegFlow: Guided Multiple Regression for Agricultural Sciences
+
+## Core Workflow
+
+Main functions for fitting and diagnosing models
+
+- [`mr_fit()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_diagnose()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_influence()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_collinearity()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_select()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_regularize()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_bootstrap()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_validate()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_importance()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_inference()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_effects()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_quantile()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_kernel()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_compare()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_recommend()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_capabilities()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_example_data()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_report()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  : Guided Multiple Regression for Agricultural Sciences
+
+## Variable Selection
+
+Functions for selecting and regularizing variables
+
+- [`mr_fit()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_diagnose()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_influence()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_collinearity()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_select()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_regularize()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_bootstrap()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_validate()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_importance()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_inference()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_effects()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_quantile()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_kernel()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_compare()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_recommend()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_capabilities()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_example_data()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_report()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  : Guided Multiple Regression for Agricultural Sciences
+
+## Resampling
+
+Bootstrap and cross-validation functions
+
+- [`mr_fit()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_diagnose()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_influence()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_collinearity()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_select()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_regularize()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_bootstrap()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_validate()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_importance()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_inference()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_effects()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_quantile()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_kernel()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_compare()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_recommend()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_capabilities()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_example_data()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_report()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  : Guided Multiple Regression for Agricultural Sciences
+
+## Importance and Effects
+
+Functions for measuring variable importance
+
+- [`mr_fit()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_diagnose()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_influence()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_collinearity()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_select()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_regularize()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_bootstrap()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_validate()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_importance()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_inference()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_effects()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_quantile()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_kernel()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_compare()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_recommend()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_capabilities()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_example_data()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_report()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  : Guided Multiple Regression for Agricultural Sciences
+
+## Flexible Alternatives
+
+Non-OLS regression engines
+
+- [`mr_fit()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_diagnose()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_influence()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_collinearity()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_select()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_regularize()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_bootstrap()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_validate()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_importance()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_inference()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_effects()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_quantile()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_kernel()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_compare()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_recommend()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_capabilities()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_example_data()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_report()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  : Guided Multiple Regression for Agricultural Sciences
+
+## Comparison and Reporting
+
+Functions for comparing models and generating reports
+
+- [`mr_fit()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_diagnose()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_influence()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_collinearity()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_select()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_regularize()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_bootstrap()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_validate()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_importance()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_inference()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_effects()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_quantile()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_kernel()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_compare()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_recommend()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_capabilities()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_example_data()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  [`mr_report()`](https://wep69.github.io/multiRegFlow/reference/multiRegFlow.md)
+  : Guided Multiple Regression for Agricultural Sciences
+
+# Articles
+
+### Getting Started
+
+- [multiRegFlow: scope, workflow and package
+  map](https://wep69.github.io/multiRegFlow/articles/v00-overview.md):
+- [Foundations to advanced multiple regression in agricultural
+  sciences](https://wep69.github.io/multiRegFlow/articles/v01-foundations-to-advanced-tutorial.md):
+
+### Diagnostics and Inference
+
+- [Diagnostics, heteroscedasticity and influential
+  observations](https://wep69.github.io/multiRegFlow/articles/v02-diagnostics-influence.md):
+- [Multicollinearity: VIF, condition indices and agronomic
+  interpretation](https://wep69.github.io/multiRegFlow/articles/v03-collinearity-vif-condition.md):
+
+### Selection and Regularization
+
+- [Variable selection, model search and
+  stability](https://wep69.github.io/multiRegFlow/articles/v04-selection-stability.md):
+- [Ridge, lasso and elastic net for agronomic multiple
+  regression](https://wep69.github.io/multiRegFlow/articles/v05-regularization.md):
+
+### Resampling and Validation
+
+- [Bootstrap uncertainty and resampling for multiple
+  regression](https://wep69.github.io/multiRegFlow/articles/v06-bootstrap-resampling.md):
+- [Out-of-sample validation and fair model
+  comparison](https://wep69.github.io/multiRegFlow/articles/v09-validation-comparison.md):
+
+### Importance and Effects
+
+- [Importance, effect size, marginal effects and
+  SHAP](https://wep69.github.io/multiRegFlow/articles/v07-importance-effects-shap.md):
+
+### Flexible Alternatives
+
+- [Robust, quantile, GAM and kernel
+  alternatives](https://wep69.github.io/multiRegFlow/articles/v08-flexible-alternatives.md):
+
+### Case Studies
+
+- [Integrated soil-fertility case
+  study](https://wep69.github.io/multiRegFlow/articles/v10-soils-case-study.md):
+- [Integrated plant-science and crop-growth case
+  study](https://wep69.github.io/multiRegFlow/articles/v11-plant-science-case-study.md):
+
+### Reporting
+
+- [Reporting, audit trails and reproducible regression
+  workflows](https://wep69.github.io/multiRegFlow/articles/v12-reporting-audit.md):

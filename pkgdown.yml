@@ -1,0 +1,21 @@
+pandoc: '3.10'
+pkgdown: 2.2.1
+pkgdown_sha: ~
+articles:
+  v00-overview: v00-overview.html
+  v01-foundations-to-advanced-tutorial: v01-foundations-to-advanced-tutorial.html
+  v02-diagnostics-influence: v02-diagnostics-influence.html
+  v03-collinearity-vif-condition: v03-collinearity-vif-condition.html
+  v04-selection-stability: v04-selection-stability.html
+  v05-regularization: v05-regularization.html
+  v06-bootstrap-resampling: v06-bootstrap-resampling.html
+  v07-importance-effects-shap: v07-importance-effects-shap.html
+  v08-flexible-alternatives: v08-flexible-alternatives.html
+  v09-validation-comparison: v09-validation-comparison.html
+  v10-soils-case-study: v10-soils-case-study.html
+  v11-plant-science-case-study: v11-plant-science-case-study.html
+  v12-reporting-audit: v12-reporting-audit.html
+last_built: 2026-08-23T15:01Z
+urls:
+  reference: https://wep69.github.io/multiRegFlow/reference
+  article: https://wep69.github.io/multiRegFlow/articles
