@@ -52,6 +52,60 @@
 </h1></div>
 <p><code>multiRegFlow</code> provides a guided, auditable workflow for multiple regression in agricultural, soil and plant sciences. The package keeps ordinary least squares as a transparent reference model and connects it to diagnostics, multicollinearity analysis, robust covariance inference, variable selection, regularization, bootstrap, relative importance, flexible alternatives and out-of-sample validation.</p>
 <div class="section level2">
+<h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
+</h2>
+<div class="section level3">
+<h3 id="quick-install-without-vignettes">Quick install (without vignettes)<a class="anchor" aria-label="anchor" href="#quick-install-without-vignettes"></a>
+</h3>
+<p>The fastest way to install <code>multiRegFlow</code> is using <code>pak</code>:</p>
+<div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="co"># Install pak if not already installed</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="st">"pak"</span>, repos <span class="op">=</span> <span class="st">"https://r-lib.github.io/p/pak/dev/"</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># Install multiRegFlow (fast, no vignettes)</span></span>
+<span><span class="fu">pak</span><span class="fu">::</span><span class="fu"><a href="https://pak.r-lib.org/reference/pak.html" class="external-link">pak</a></span><span class="op">(</span><span class="st">"wep69/multiRegFlow"</span><span class="op">)</span></span></code></pre></div>
+<p>Or using <code>remotes</code>:</p>
+<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="co"># Install remotes if not already installed</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="st">"remotes"</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># Install multiRegFlow (fast, no vignettes)</span></span>
+<span><span class="fu">remotes</span><span class="fu">::</span><span class="fu"><a href="https://remotes.r-lib.org/reference/install_github.html" class="external-link">install_github</a></span><span class="op">(</span><span class="st">"wep69/multiRegFlow"</span><span class="op">)</span></span></code></pre></div>
+</div>
+<div class="section level3">
+<h3 id="full-install-with-vignettes">Full install (with vignettes)<a class="anchor" aria-label="anchor" href="#full-install-with-vignettes"></a>
+</h3>
+<p>To install the package with all 13 pedagogical vignettes:</p>
+<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="co"># Using remotes (recommended for vignettes)</span></span>
+<span><span class="fu">remotes</span><span class="fu">::</span><span class="fu"><a href="https://remotes.r-lib.org/reference/install_github.html" class="external-link">install_github</a></span><span class="op">(</span><span class="st">"wep69/multiRegFlow"</span>, build_vignettes <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></code></pre></div>
+<p><strong>Note:</strong> Building vignettes requires additional time and dependencies (knitr, rmarkdown, ggplot2). The vignettes provide comprehensive tutorials and case studies.</p>
+</div>
+<div class="section level3">
+<h3 id="install-from-source-tarball">Install from source tarball<a class="anchor" aria-label="anchor" href="#install-from-source-tarball"></a>
+</h3>
+<p>If you have the source tarball <code>multiRegFlow_0.2.0.tar.gz</code>:</p>
+<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="co"># Without vignettes</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="st">"multiRegFlow_0.2.0.tar.gz"</span>, repos <span class="op">=</span> <span class="cn">NULL</span>, type <span class="op">=</span> <span class="st">"source"</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># With vignettes</span></span>
+<span><span class="fu">remotes</span><span class="fu">::</span><span class="fu"><a href="https://remotes.r-lib.org/reference/install_local.html" class="external-link">install_local</a></span><span class="op">(</span><span class="st">"multiRegFlow_0.2.0.tar.gz"</span>, build_vignettes <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></code></pre></div>
+</div>
+<div class="section level3">
+<h3 id="verify-installation">Verify installation<a class="anchor" aria-label="anchor" href="#verify-installation"></a>
+</h3>
+<p>After installation, verify the package loads correctly:</p>
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://wep69.github.io/multiRegFlow/">multiRegFlow</a></span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/utils/packageDescription.html" class="external-link">packageVersion</a></span><span class="op">(</span><span class="st">"multiRegFlow"</span><span class="op">)</span></span>
+<span><span class="fu"><a href="reference/multiRegFlow.html">mr_capabilities</a></span><span class="op">(</span><span class="op">)</span></span></code></pre></div>
+<p>To view installed vignettes:</p>
+<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/browseVignettes.html" class="external-link">browseVignettes</a></span><span class="op">(</span><span class="st">"multiRegFlow"</span><span class="op">)</span></span></code></pre></div>
+</div>
+</div>
+<div class="section level2">
 <h2 id="design-principle">Design principle<a class="anchor" aria-label="anchor" href="#design-principle"></a>
 </h2>
 <p>The package separates two goals that are often mixed in applied analysis:</p>
@@ -66,7 +120,7 @@
 <div class="section level2">
 <h2 id="core-workflow">Core workflow<a class="anchor" aria-label="anchor" href="#core-workflow"></a>
 </h2>
-<div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://wep69.github.io/multiRegFlow/">multiRegFlow</a></span><span class="op">)</span></span>
 <span></span>
 <span><span class="va">soil</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/multiRegFlow.html">mr_example_data</a></span><span class="op">(</span><span class="st">"soil_fertility"</span><span class="op">)</span></span>
@@ -89,7 +143,7 @@
 <div class="section level2">
 <h2 id="selection-and-shrinkage">Selection and shrinkage<a class="anchor" aria-label="anchor" href="#selection-and-shrinkage"></a>
 </h2>
-<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="reference/multiRegFlow.html">mr_select</a></span><span class="op">(</span><span class="va">fit</span>, <span class="st">"aic"</span><span class="op">)</span></span>
 <span><span class="fu"><a href="reference/multiRegFlow.html">mr_select</a></span><span class="op">(</span><span class="va">fit</span>, <span class="st">"bic"</span><span class="op">)</span></span>
 <span></span>
@@ -103,7 +157,7 @@
 <div class="section level2">
 <h2 id="bootstrap-and-robust-covariance">Bootstrap and robust covariance<a class="anchor" aria-label="anchor" href="#bootstrap-and-robust-covariance"></a>
 </h2>
-<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="reference/multiRegFlow.html">mr_bootstrap</a></span><span class="op">(</span><span class="va">fit</span>, R <span class="op">=</span> <span class="fl">2000</span>, type <span class="op">=</span> <span class="st">"pairs"</span><span class="op">)</span></span>
 <span></span>
 <span><span class="va">het</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/multiRegFlow.html">mr_example_data</a></span><span class="op">(</span><span class="st">"agronomy_heteroskedastic"</span><span class="op">)</span></span>
@@ -118,7 +172,7 @@
 <div class="section level2">
 <h2 id="flexible-alternatives">Flexible alternatives<a class="anchor" aria-label="anchor" href="#flexible-alternatives"></a>
 </h2>
-<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="reference/multiRegFlow.html">mr_fit</a></span><span class="op">(</span><span class="va">...</span>, engine <span class="op">=</span> <span class="st">"robust"</span><span class="op">)</span></span>
 <span><span class="fu"><a href="reference/multiRegFlow.html">mr_fit</a></span><span class="op">(</span><span class="va">...</span>, engine <span class="op">=</span> <span class="st">"quantile"</span>, tau <span class="op">=</span> <span class="fl">0.5</span><span class="op">)</span></span>
 <span><span class="fu"><a href="reference/multiRegFlow.html">mr_fit</a></span><span class="op">(</span><span class="va">...</span>, engine <span class="op">=</span> <span class="st">"gam"</span><span class="op">)</span></span>
@@ -128,7 +182,7 @@
 <div class="section level2">
 <h2 id="prediction-and-comparison">Prediction and comparison<a class="anchor" aria-label="anchor" href="#prediction-and-comparison"></a>
 </h2>
-<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">pred_fit</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/multiRegFlow.html">mr_fit</a></span><span class="op">(</span></span>
 <span>  <span class="va">yield_t_ha</span> <span class="op">~</span> <span class="va">organic_matter_pct</span> <span class="op">+</span> <span class="va">available_P_mg_dm3</span> <span class="op">+</span> <span class="va">season_rain_mm</span>,</span>
 <span>  <span class="va">soil</span>,</span>

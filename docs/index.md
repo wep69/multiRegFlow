@@ -7,6 +7,77 @@ to diagnostics, multicollinearity analysis, robust covariance inference,
 variable selection, regularization, bootstrap, relative importance,
 flexible alternatives and out-of-sample validation.
 
+## Installation
+
+### Quick install (without vignettes)
+
+The fastest way to install `multiRegFlow` is using `pak`:
+
+``` r
+
+# Install pak if not already installed
+install.packages("pak", repos = "https://r-lib.github.io/p/pak/dev/")
+
+# Install multiRegFlow (fast, no vignettes)
+pak::pak("wep69/multiRegFlow")
+```
+
+Or using `remotes`:
+
+``` r
+
+# Install remotes if not already installed
+install.packages("remotes")
+
+# Install multiRegFlow (fast, no vignettes)
+remotes::install_github("wep69/multiRegFlow")
+```
+
+### Full install (with vignettes)
+
+To install the package with all 13 pedagogical vignettes:
+
+``` r
+
+# Using remotes (recommended for vignettes)
+remotes::install_github("wep69/multiRegFlow", build_vignettes = TRUE)
+```
+
+**Note:** Building vignettes requires additional time and dependencies
+(knitr, rmarkdown, ggplot2). The vignettes provide comprehensive
+tutorials and case studies.
+
+### Install from source tarball
+
+If you have the source tarball `multiRegFlow_0.2.0.tar.gz`:
+
+``` r
+
+# Without vignettes
+install.packages("multiRegFlow_0.2.0.tar.gz", repos = NULL, type = "source")
+
+# With vignettes
+remotes::install_local("multiRegFlow_0.2.0.tar.gz", build_vignettes = TRUE)
+```
+
+### Verify installation
+
+After installation, verify the package loads correctly:
+
+``` r
+
+library(multiRegFlow)
+packageVersion("multiRegFlow")
+mr_capabilities()
+```
+
+To view installed vignettes:
+
+``` r
+
+browseVignettes("multiRegFlow")
+```
+
 ## Design principle
 
 The package separates two goals that are often mixed in applied
