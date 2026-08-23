@@ -3,3 +3,4 @@
 ^SCIENTIFIC_SCOPE\.md$
 ^VIGNETTE_ORGANIZATION\.md$
 ^_debug_.*\.R$
+^cheatsheets$
