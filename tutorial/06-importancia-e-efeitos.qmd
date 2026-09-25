@@ -1,0 +1,544 @@
+# Importancia e efeitos {#sec-importancia}
+
+```{r}
+#| label: c06-setup
+#| include: false
+source("_common.R")
+A06 <- dados_A()
+fit06 <- mr_fit(FORM_A, A06, goal = "explanation")
+```
+
+Este capitulo trata de duas perguntas que costumam aparecer juntas num relatorio
+e que respondem a coisas diferentes: **quais variaveis pesam mais no modelo** e
+**o que acontece quando a mao muda a dose de cada variavel**. O pacote oferece
+uma funcao para cada pergunta, `mr_importance()` e `mr_effects()`, e o capitulo
+vai mostrar por que as duas nao podem ser trocadas.
+
+O ponto que organiza tudo o que vem a seguir e o seguinte: as medidas de
+importancia que `mr_importance()` oferece **nao sao cinco definicoes
+intercambiaveis de importancia**. Cada uma responde a uma pergunta diferente,
+cada uma tem uma unidade diferente, e uma delas tem uma propriedade aritmetica
+que e consequencia de como foi pedida, e nao uma descoberta sobre o dado.
+Confundir qualquer par delas e a forma mais comum de publicar um numero de
+importancia que nao responde a pergunta feita.
+
+## As cinco medidas, lado a lado
+
+O ajuste de referencia e o mesmo do @sec-ajuste: cenario A, `r nrow(A06)`
+observacoes, sete preditores, relacao linear com variancia crescente com a
+argila. Cada metodo produz um objeto de estrutura diferente, e essa diferenca
+ja e informacao: ela diz de que familia a medida vem.
+
+```{r}
+#| label: c06-cinco-medidas
+METODOS06 <- c("standardized", "partial_r2", "semi_partial_r2", "lmg", "shap")
+imp06 <- lapply(METODOS06, function(m) mr_importance(fit06, m))
+names(imp06) <- METODOS06
+usar("mr_importance", x = "mr_fit", method = "standardized")
+usar("mr_importance", x = "mr_fit", method = "partial_r2")
+usar("mr_importance", x = "mr_fit", method = "semi_partial_r2")
+usar("mr_importance", x = "mr_fit", method = "lmg")
+usar("mr_importance", x = "mr_fit", method = "shap")
+
+quadro06 <- data.frame(
+  metodo = METODOS06,
+  classe = c(class(imp06$standardized), class(imp06$partial_r2),
+             class(imp06$semi_partial_r2), class(imp06$lmg),
+             class(imp06$shap)),
+  container = c("data.frame", "data.frame", "data.frame", "objeto S4", "lista"),
+  unidade = c("desvio de y por desvio de x",
+              "fracao da variancia residual, sem x",
+              "fracao da variancia total, sozinha",
+              "fracao da variancia explicada, normalizada",
+              "unidade de y, por observacao"),
+  stringsAsFactors = FALSE)
+tab(quadro06, caption = paste(
+  "Os cinco metodos de mr_importance(). Repare que so os tres primeiros",
+  "devolvem um data.frame de duas colunas: os outros dois devolvem um objeto",
+  "S4 e uma lista, e precisam de extracoes diferentes."))
+```
+
+A leitura dessa tabela e a que evita o erro mais caro do capitulo. As tres
+primeiras linhas sao coeficientes derivados do MQO. A quarta e uma particao da
+variancia explicada, vinda do pacote `relaimpo`, entregue como objeto S4. A
+quinta e uma decomposicao por observacao, vinda do `kernelshap`, entregue como
+lista com uma matriz `S` dentro. **Elas nao se somam, nao ocupam a mesma
+unidade e nao respondem a mesma pergunta.** O que resta do capitulo e mostrar
+isso numero a numero.
+
+## `standardized`: o coeficiente dividido pela escala
+
+O metodo `standardized` multiplica o coeficiente do MQO pelo desvio-padrao do
+preditor e divide pelo desvio-padrao da resposta. E a unica das cinco medidas
+que responde a pergunta "quantos desvios de `yield_t_ha` eu ganho por desvio
+de `soil_pH`". Essa conta e verificada aqui, e nao afirmada:
+
+```{r}
+#| label: c06-standardized-conta
+std06 <- imp06$standardized
+termo_ref06 <- "soil_pH"
+cf06 <- coef(fit06$model)[[termo_ref06]]
+sdx06 <- sd(A06[[termo_ref06]])
+sdy06 <- sd(A06$yield_t_ha)
+manual06 <- cf06 * sdx06 / sdy06
+cat("coeficiente do MQO          :", fmt(cf06, 6), "\n")
+cat("desvio-padrao do preditor   :", fmt(sdx06, 6), "\n")
+cat("desvio-padrao da resposta   :", fmt(sdy06, 6), "\n")
+cat("conta manual                :", fmt(manual06, 6), "\n")
+cat("o que mr_importance devolve :",
+    fmt(std06$standardized_beta[std06$term == termo_ref06], 6), "\n")
+cat("as duas sao iguais?", isTRUE(all.equal(manual06,
+    std06$standardized_beta[std06$term == termo_ref06])), "\n")
+```
+
+Agora a propriedade que faz deste metodo o mais perigoso dos cinco em
+aplicacao de campo: troque a unidade de uma variavel e veja o que acontece.
+
+```{r}
+#| label: c06-standardizado-escala
+A06b <- A06
+A06b$chuva_cm <- round(A06$season_rain_mm / 10, 1)
+form_b06 <- yield_t_ha ~ soil_pH + organic_matter_pct + clay_pct +
+  available_P_mg_dm3 + exchangeable_K_mg_dm3 + soil_moisture_pct + chuva_cm
+fit06b <- mr_fit(form_b06, A06b, goal = "explanation")
+std06b <- mr_importance(fit06b, "standardized")
+ef_mm06 <- mr_effects(fit06, variables = "season_rain_mm")
+ef_cm06 <- mr_effects(fit06b, variables = "chuva_cm")
+cat("coeficiente com a chuva em mm :", fmt(coef(fit06$model)[["season_rain_mm"]], 6), "\n")
+cat("coeficiente com a chuva em cm :", fmt(coef(fit06b$model)[["chuva_cm"]], 6), "\n")
+cat("beta padronizado em mm        :",
+    fmt(std06$standardized_beta[std06$term == "season_rain_mm"], 6), "\n")
+cat("beta padronizado em cm        :",
+    fmt(std06b$standardized_beta[std06b$term == "chuva_cm"], 6), "\n")
+cat("inclinacao media em mm        :", fmt(ef_mm06$estimate, 6), "\n")
+cat("inclinacao media em cm        :", fmt(ef_cm06$estimate, 6), "\n")
+```
+
+Esse e o coracao do capitulo. O coeficiente e a inclinacao mudam de valor com a
+unidade, porque a unidade **e** parte da pergunta que eles respondem. O beta
+padronizado nao muda, porque ele ja foi dividido pela unidade dos dois lados.
+So que ai esta exatamente a limitacao: um beta padronizado coloca `soil_pH` e
+`season_rain_mm` na mesma fila porque ambos foram multiplicados pelo proprio
+desvio-padrao, e nao porque as unidades tenham alguma relacao entre si. A
+medida e legitima dentro do que promete. O que ela nao promete e que
+`r fmt(std06$standardized_beta[std06$term == "soil_pH"], 4)` e
+`r fmt(std06$standardized_beta[std06$term == "season_rain_mm"], 4)` sejam
+comparaveis como "efeitos agronomicos": sao compraveis como variacao
+padronizada, que e outra coisa.
+
+## `partial_r2` e `semi_partial_r2`: duas perguntas sobre a mesma variancia
+
+Os dois medem R2, mas respondem a perguntas distintas, e a diferenca entre eles
+e systematicamente maior que zero neste ajuste.
+
+- `partial_r2` responde: quanto da variancia da resposta **nao compartilhada**
+  com os outros preditores o preditor segura sozinho? O pacote calcula a
+  partir do valor t do MQO, com os graus de residuo do modelo completo.
+- `semi_partial_r2` responde: quanto da variancia **total** da resposta o
+  preditor acrescenta quando entra sozinho no modelo? O pacote calcula a
+  partir da diferenca de soma de quadrados entre o modelo completo e o modelo
+  reduzido, dividida pela variacao total.
+
+```{r}
+#| label: c06-partial-vs-semi
+pr06 <- imp06$partial_r2
+sp06 <- imp06$semi_partial_r2
+R2_06 <- summary(fit06$model)$r.squared
+cat("soma de partial_r2     :", fmt(sum(pr06$partial_R2), 6), "\n")
+cat("soma de semi_partial_r2:", fmt(sum(sp06$semi_partial_R2), 6), "\n")
+cat("R2 do modelo completo  :", fmt(R2_06, 6), "\n\n")
+tab(data.frame(
+  termo = pr06$term,
+  partial_R2 = round(pr06$partial_R2, 5),
+  semi_partial_R2 = round(sp06$semi_partial_R2, 5),
+  razao = round(pr06$partial_R2 / sp06$semi_partial_R2, 3),
+  diferenca = round(pr06$partial_R2 - sp06$semi_partial_R2, 5),
+  stringsAsFactors = FALSE),
+  caption = paste(
+    "As duas medidas de R2 parcial, termo a termo. A razao e sempre maior que",
+    "um, e a diferenca nunca e zero: os dois metodos nao sao duas formas de",
+    "calcular a mesma coisa."))
+```
+
+A razao fica entre `r fmt(min(pr06$partial_R2 / sp06$semi_partial_R2), 2)` e
+`r fmt(max(pr06$partial_R2 / sp06$semi_partial_R2), 2)` e muda de termo para
+termo. Isso mostra que a escolha entre as duas nao e estetica: `partial_r2`
+enfatiza o que o preditor segura **alem** dos colegas, e por isso cresce com o
+numero de preditores concorrentes; `semi_partial_r2` mede o incremento sobre o
+modelo completo, e por isso e a medida que se compara diretamente com o R2 do
+modelo. Nenhuma das duas soma `r fmt(R2_06, 3)`, e o livro nao afirma que devam.
+
+## `lmg`: a medida que soma um por construcao
+
+LMG e a unica das cinco que traz uma propriedade aritmetica fechada, e essa
+propriedade vem da forma como o pacote a pede, nao de uma descoberta sobre os
+dados.
+
+```{r}
+#| label: c06-lmg-soma
+lmg06 <- imp06$lmg
+soma_lmg06 <- sum(lmg06@lmg)
+cat("soma do LMG devolvido pelo pacote:", fmt(soma_lmg06, 6), "\n")
+cat("R2 do modelo que ele decompoe   :", fmt(lmg06@R2, 6), "\n")
+cat("R2 do ajuste, lido no summary() :", fmt(R2_06, 6), "\n")
+cat("o modelo explica", pct(R2_06, 1), "da variancia, e mesmo assim o LMG soma",
+    fmt(soma_lmg06, 6), "\n")
+```
+
+O que `r fmt(soma_lmg06, 6)` significa: **a divisao interna da variancia
+explicada, e nada mais**. O pacote pede os valores normalizados, com
+`rela = TRUE` fixo na chamada, e a tentativa de passar `rela = FALSE` pelo
+argumento `...` e recusada com a mensagem de argumento duplicado. O que
+`r fmt(soma_lmg06, 6)` **nao** significa: que o modelo explique toda a variancia
+da resposta, nem que as variaveis listadas sejam a unica fonte de informacao,
+nem que a soma tenha conteudo diagnostico. E uma propriedade da normalizacao.
+
+A prova e direta: o mesmo modelo, chamado sem normalizar, entrega uma
+decomposicao que soma exatamente o R2 do ajuste.
+
+```{r}
+#| label: c06-lmg-sem-normalizar
+lmg_bruto06 <- relaimpo::calc.relimp(fit06$model, type = "lmg", rela = FALSE)
+tab(data.frame(
+  termo = names(lmg_bruto06$lmg),
+  lmg_bruto = round(as.numeric(lmg_bruto06$lmg), 6),
+  lmg_normalizado = round(as.numeric(lmg06@lmg), 6),
+  predizivel = round(as.numeric(lmg_bruto06$lmg) / R2_06, 6),
+  stringsAsFactors = FALSE),
+  caption = paste(
+    "A ultima coluna e a segunda dividida pelo R2 do modelo. A normalizacao",
+    "que o pacote aplica e uma divisao, e a divisao e o que produz a soma igual",
+    "a um."))
+cat("soma do LMG sem normalizar:", fmt(sum(lmg_bruto06$lmg), 6), "\n")
+cat("igual ao R2 do ajuste?     :",
+    isTRUE(all.equal(unname(sum(lmg_bruto06$lmg)), R2_06)), "\n")
+```
+
+## `shap`: exato, por observacao, e so para modelo aditivo
+
+O quinto metodo muda de natureza: em vez de uma linha por variavel, devolve uma
+matriz com uma linha por observacao. Para cada linha, os valores somam, juntos
+com a linha de base, exatamente o valor ajustado pelo modelo.
+
+```{r}
+#| label: c06-shap-aditividade
+sh06 <- imp06$shap
+cat("nomes do objeto shap:", paste(names(sh06), collapse = ", "), "\n")
+cat("dim da matriz S      :", paste(dim(sh06$S), collapse = " por "), "\n")
+cat("exato?               :", sh06$exact, "\n\n")
+residuo_shap06 <- predict(fit06$model, A06) - sh06$baseline - rowSums(sh06$S)
+cat("maior desvio entre o ajustado e a decomposicao:",
+    fmt(max(abs(residuo_shap06)), 8), "\n")
+tab(round(head(as.data.frame(sh06$S), 3), 4),
+    caption = paste("As primeiras linhas da matriz S. Cada linha soma a",
+                    "contribuicao de todas as variaveis naquela observacao."))
+```
+
+A exatidade acima e a razao de a restricao existir. `additive_shap()` recusa
+modelo com interacao, e o pacote repassa a recusa sem embrulhar:
+
+```{r}
+#| label: c06-shap-interacao
+fit_int06 <- mr_fit(yield_t_ha ~ soil_pH * organic_matter_pct + clay_pct +
+  available_P_mg_dm3 + exchangeable_K_mg_dm3 + soil_moisture_pct +
+  season_rain_mm, A06, goal = "explanation")
+erro_shap06 <- tryCatch(suppressMessages(mr_importance(fit_int06, "shap")),
+                        error = function(e) conditionMessage(e))
+cat("mr_importance(fit com interacao, 'shap') devolve:\n  ", erro_shap06, "\n")
+```
+
+Isto e, e nao preferencia do autor do pacote. Com interacao, a contribuicao de
+uma variavel depende do nivel da outra, e nao existe um numero unico por
+observacao que some para o ajustado. Qualquer metodo que devolvesse um seria
+uma aproximacao silenciosa. O SHAP exato prefere recusar, e o leitor precisa
+saber que a recusa e o comportamento correto, e nao um defeito.
+
+Como obter uma importancia por variavel a partir dessa matriz? A escolha mais
+simples e a media do valor absoluto, que e o que a literatura chama de
+importancia SHAP media. Repare que isso mede **magnitude em unidade de y por
+observacao**, e nao variancia explicada: e uma terceira unidade, diferente das
+duas primeiras.
+
+```{r}
+#| label: c06-shap-importancia
+imp_shap06 <- data.frame(term = colnames(sh06$S),
+                         media_abs_S = round(colMeans(abs(sh06$S)), 4),
+                         stringsAsFactors = FALSE)
+tab(imp_shap06, caption = paste(
+  "Importancia SHAP media, derivada da matriz S. E a unica das cinco medidas",
+  "que tem o mesmo significado para o ajuste de MQO e para o ajuste aditivo",
+  "com smoothness, porque depende so do valor previsto."))
+```
+
+## O metodo invalido recusa com a lista de opcoes
+
+Um erro de digitacao no nome do metodo nao produz resultado silencioso nem
+mensagem generica. O `match.arg()` devolve a lista completa.
+
+```{r}
+#| label: c06-metodo-invalido
+erro_met06 <- tryCatch(mr_importance(fit06, "xgboost"),
+                       error = function(e) conditionMessage(e))
+cat("mr_importance(fit06, 'xgboost') devolve:\n  ", erro_met06, "\n")
+cat("\nnumero de metodos aceitos:", length(METODOS06), "\n")
+```
+
+O mesmo `match.arg()` cobre o argumento ausente: chamar `mr_importance()` sem
+metodo usa o primeiro da lista, e portanto o coeficiente padronizado. Nao ha um
+valor "neutro"; ha uma escolha implicita, e ela precisa estar escrita no
+relatorio.
+
+## `mr_effects`: a inclinacao, nao a importancia
+
+`mr_effects()` delega ao pacote `marginaleffects` e devolve a media das
+inclinacoes marginais, com intervalo e teste. O objeto devolvido tem
+`r length(names(as.data.frame(mr_effects(fit06))))` colunas e tres classes ao
+mesmo tempo.
+
+```{r}
+#| label: c06-efeitos-anatomia
+ef06 <- mr_effects(fit06)
+usar("mr_effects", x = "mr_fit", variables = "NULL")
+usar("mr_effects", x = "mr_fit", variables = "soil_pH")
+usar("mr_effects", x = "mr_fit", variables = "c('soil_pH', 'season_rain_mm')")
+cat("classe:", paste(class(ef06), collapse = ", "), "\n")
+cat("dimensoes:", paste(dim(as.data.frame(ef06)), collapse = " por "), "\n")
+cat("variaveis devolvidas com variables = NULL:", nrow(as.data.frame(ef06)), "\n")
+cat("previsores do modelo:", length(fit06$predictors), "\n\n")
+tab(data.frame(
+  coluna = names(as.data.frame(ef06)),
+  conteudo = c("variavel para a qual a inclinacao foi calculada",
+               "tipo de contraste, sempre dY/dX neste caso",
+               "inclinacao marginal media, na unidade da propria variavel",
+               "erro-padrao dessa media",
+               "a inclinacao dividida pelo erro-padrao",
+               "valor-p do teste de inclinacao zero",
+               "valor-p transformado, para ordenar por evidencia",
+               "limite inferior do intervalo de confianca",
+               "limite superior do intervalo de confianca"),
+  stringsAsFactors = FALSE),
+  caption = "As colunas do objeto devolvido por mr_effects().")
+```
+
+O argumento `variables` filtra a saida. Ele aceita `NULL` (todas), um nome, ou
+varios nomes, e a tabela comeca a mudar de tamanho imediatamente.
+
+```{r}
+#| label: c06-efeitos-filtro
+um06 <- mr_effects(fit06, variables = "soil_pH")
+dois06 <- mr_effects(fit06, variables = c("soil_pH", "season_rain_mm"))
+cat("com variables = NULL           :", nrow(as.data.frame(ef06)), "linhas\n")
+cat("com variables = uma variavel   :", nrow(as.data.frame(um06)), "linha\n")
+cat("com variables = duas variaveis :", nrow(as.data.frame(dois06)), "linhas\n\n")
+tab(data.frame(
+  termo = as.character(dois06$term),
+  estimativa = round(dois06$estimate, 6),
+  erro_padrao = round(dois06$std.error, 6),
+  p = vapply(dois06$p.value, fmt_p, character(1)),
+  stringsAsFactors = FALSE),
+  caption = paste("Duas variaveis, duas linhas. A coluna `p` traz o teste de",
+                  "inclinacao zero para cada variavel, na unidade da variavel."))
+```
+
+## O aviso e o erro de variavel inexistente
+
+Nomear uma variavel que nao existe produz uma sequencia de dois eventos, e ela
+so aparece se o teste for feito com a captura de aviso **e** a de erro ao mesmo
+tempo. Com uma unica variavel inexistente vem o aviso e vem o erro. Com uma
+mistura vem o aviso, e a variavel invalida e descartada em silencio.
+
+```{r}
+#| label: c06-efeitos-invalida
+msg06 <- function(expr) {
+  avisos <- character(0)
+  res <- withCallingHandlers(
+    tryCatch(expr, error = function(e) structure(list(msg = conditionMessage(e)),
+                                               class = "erro_06")),
+    warning = function(cond) {
+      avisos <<- c(avisos, conditionMessage(cond))
+      invokeRestart("muffleWarning")
+    })
+  list(avisos = avisos, res = res)
+}
+so_invalida06 <- msg06(mr_effects(fit06, variables = "argila_inexistente"))
+mistura06 <- msg06(mr_effects(fit06, variables = c("soil_pH", "argila_inexistente")))
+
+cat("--- variables = 'argila_inexistente' ---\n")
+cat("avisos:", paste(so_invalida06$avisos, collapse = " | "), "\n")
+cat("erro   :", so_invalida06$res$msg, "\n\n")
+
+cat("--- variables = c('soil_pH', 'argila_inexistente') ---\n")
+cat("avisos:", paste(mistura06$avisos, collapse = " | "), "\n")
+cat("a tabela devolvida tem", nrow(as.data.frame(mistura06$res)),
+    "linha(s), com os termos:",
+    paste(as.character(mistura06$res$term), collapse = ", "), "\n")
+cat("voce pediu", 2, "variaveis e recebeu",
+    nrow(as.data.frame(mistura06$res)), "linha(s).\n")
+```
+
+O comportamento de fundo vem do `marginaleffects`, e ele e sensato: quando a
+variavel nao existe no `newdata`, a inclinacao dela e indefinida. O que o
+leitor precisa guardar e o caso intermediario, porque nele **nao ha erro**:
+
+```{r}
+#| label: c06-armadilha-misto
+cat("a variavel invalida sobrevive no resultado?",
+    "argila_inexistente" %in% as.character(mistura06$res$term), "\n")
+cat("o aviso veio por canal de erro?",
+    inherits(mistura06$res, "erro_06"), "\n")
+cat("variaveis pedidas: soil_pH e argila_inexistente\n")
+cat("linhas recebidas:", nrow(as.data.frame(mistura06$res)), "\n")
+```
+
+::: {.callout-warning}
+## A armadilha do vetor misto
+
+`mr_effects(fit, variables = c("soil_pH", "nome_que_nao_existe"))` **nao
+falha**. Ele devolve uma tabela com menos uma linha do que voce pediu, e o aviso
+"Variable(s) not found in `newdata`" e a unica pista, e ela fica no console.
+Se o console estiver oculto, o unico sinal e que a tabela veio menor. Confira
+sempre o numero de termos devolvidos contra o numero de variaveis pedidas,
+antes de reportar a tabela.
+:::
+
+## O contraste que organiza a decisao do capitulo
+
+Para a mesma variavel, o mesmo ajuste e o mesmo numero de observacoes,
+`mr_importance(fit, "standardized")` e `mr_effects()` devolvem numeros
+diferentes, porque respondem a perguntas diferentes.
+
+```{r}
+#| label: c06-contraste
+termo_c06 <- "soil_pH"
+linha_std06 <- std06[std06$term == termo_c06, ]
+linha_ef06 <- as.data.frame(um06)
+cat("variavel:", termo_c06, "\n\n")
+cat("mr_importance('standardized') :", fmt(linha_std06$standardized_beta, 6),
+    " desvio de y por desvio de x\n")
+cat("mr_effects()                  :", fmt(linha_ef06$estimate, 6),
+    " t/ha por unidade de pH\n")
+cat("coeficiente do MQO            :", fmt(cf06, 6), " t/ha por unidade de pH\n")
+cat("\no coeficiente do MQO e a inclinacao marginal media sao iguais?",
+    isTRUE(all.equal(cf06, linha_ef06$estimate)), "\n")
+cat("E obrigatorio: em um modelo linear, a inclinacao em relacao a cada",
+    "preditor e o proprio coeficiente.\n")
+cat("O beta padronizado e",
+    fmt(abs(linha_ef06$estimate) / abs(linha_std06$standardized_beta), 4),
+    "vezes menor, porque foi dividido por", fmt(sdy06 / sdx06, 4), "\n")
+```
+
+O grafo abaixo compara as duas medidas em todos os preditores, cada uma
+normalizada pela sua propria maior magnitude. E a forma de ver que a ordem se
+mexe quando a pergunta muda.
+
+```{r}
+#| label: c06-figura-contraste
+tab_ef06 <- as.data.frame(ef06)
+tab_ef06$termo <- as.character(tab_ef06$term)
+compar06 <- merge(data.frame(termo = std06$term,
+                             padronizado = abs(std06$standardized_beta),
+                             stringsAsFactors = FALSE),
+                  data.frame(termo = tab_ef06$termo,
+                             inclinacao = abs(tab_ef06$estimate),
+                             stringsAsFactors = FALSE),
+                  by = "termo")
+compar06$padronizado <- compar06$padronizado / max(compar06$padronizado)
+compar06$inclinacao <- compar06$inclinacao / max(compar06$inclinacao)
+niveis06 <- compar06$termo[order(compar06$padronizado)]
+compar06$termo <- factor(compar06$termo, levels = niveis06)
+
+ggplot(compar06) +
+  geom_segment(aes(x = 0, xend = 1, y = termo, yend = termo),
+               colour = CINZA, linewidth = .4) +
+  geom_point(aes(y = termo, x = padronizado), colour = AZUL, size = 3) +
+  geom_point(aes(y = termo, x = inclinacao), colour = LARANJA, size = 3,
+             shape = 17) +
+  scale_x_continuous(limits = c(0, 1.05), expand = c(0, 0),
+                     labels = function(z) paste0(round(100 * z), "%")) +
+  labs(x = "Magnitude relativa a maior do conjunto",
+       y = NULL,
+       title = "Padronizado e inclinacao media ordenam o modelo diferente",
+       subtitle = paste("Azul: maior beta padronizado vira um. Laranja: maior",
+                        "inclinacao por unidade vira um. Sao unidades diferentes",
+                        "e nao sao comparaveis entre si.")) +
+  tema_pacote()
+```
+
+O que a figura mostra e o que a tabela de ranking quantifica. A ordem por beta
+padronizado e a ordem por inclinacao media **nao sao a mesma ordem**, e a razao
+vale ser dita: a inclinacao media e medida na unidade da variavel, e as unidades
+do cenario A nao tem relacao entre si. Um milimetro de chuva e um ponto de
+umidade nao podem ser comparados diretamente.
+
+```{r}
+#| label: c06-ranking-contrasta
+ord_pad06 <- std06$term[order(-abs(std06$standardized_beta))]
+ord_ef06 <- tab_ef06$termo[order(-abs(tab_ef06$estimate))]
+cat("ordem por beta padronizado:\n  ", paste(ord_pad06, collapse = " > "), "\n\n")
+cat("ordem por inclinacao media:\n  ", paste(ord_ef06, collapse = " > "), "\n\n")
+cat("a ordem e a mesma?", identical(ord_pad06, ord_ef06), "\n")
+cat("primeira na ordem padronizada  :", ord_pad06[1], "\n")
+cat("primeira na ordem de inclinacao:", ord_ef06[1], "\n")
+```
+
+## Onde as cinco medidas discordam de verdade
+
+Para fechar a discussao, vale ver o unico caso do capitulo que produz uma
+inversao de posicao, e nao apenas uma troca de unidade. As cinco medidas
+ordenam os sete preditores do cenario A, e quatro delas concordam entre si.
+
+```{r}
+#| label: c06-ranking-cinco
+imp_lmg06 <- as.numeric(imp06$lmg@lmg)
+imp_shap06 <- colMeans(abs(sh06$S))
+ranking06 <- data.frame(
+  termo = std06$term,
+  padrao = as.integer(rank(-abs(std06$standardized_beta))),
+  parcial = as.integer(rank(-pr06$partial_R2)),
+  semi_parcial = as.integer(rank(-sp06$semi_partial_R2)),
+  lmg = as.integer(rank(-imp_lmg06)),
+  shap = as.integer(rank(-imp_shap06)),
+  stringsAsFactors = FALSE)
+ranking06 <- ranking06[order(ranking06$padrao), ]
+tab(ranking06, caption = paste(
+  "Posicao de cada preditor sob cada medida, da mais importante para a menos",
+  "importante. A posicao 1 e a mais importante. Quatro medidas concordam em",
+  "quase tudo; o LMG troca de lugar as duas variaveis que disputam a mesma",
+  "posicao."))
+mudar06 <- ranking06$termo[ranking06$padrao != ranking06$lmg]
+cat("preditores que mudam de posicao entre padronizado e LMG:",
+    paste(mudar06, collapse = ", "), "\n")
+cat("no padronizado, essas posicoes sao",
+    paste(ranking06$padrao[ranking06$padrao != ranking06$lmg], collapse = " e "), "\n")
+cat("no LMG, essas posicoes sao",
+    paste(ranking06$lmg[ranking06$padrao != ranking06$lmg], collapse = " e "), "\n")
+```
+
+::: {.callout-important}
+## A leitura que o livro proibe
+
+Nao existe um "coeficiente de importancia" unico. Quando a tabela do relatorio
+traz um numero so, ela esta necessariamente embutindo uma escolha entre as
+cinco, e essa escolha nao aparece no numero. Se a escolha nao for escrita ao
+lado do numero, o numero nao e reproduzivel, e a discussao sobre qual variavel
+merece atencao no campo passa a depender de uma convencao silenciosa.
+:::
+
+```{r}
+#| label: c06-fechar
+salvar_uso("06")
+salvar_decisoes("06",
+  paste("Usar LMG para ordenar preditores e mr_effects() para a inclinacao por",
+        "unidade; nao usar o coeficiente padronizado para comparar preditores",
+        "de unidades diferentes."),
+  paste("O LMG devolvido soma", fmt(soma_lmg06, 6), "enquanto o R2 do mesmo",
+        "ajuste e", fmt(R2_06, 6), ": a soma igual a um vem da normalizacao",
+        "fixa (rela = TRUE), e a divisao sem normalizar soma",
+        fmt(sum(lmg_bruto06$lmg), 6), "igual ao R2. No mesmo ajuste,",
+        "'standardized' e mr_effects() discordam sobre a ordem dos preditores:",
+        "a primeira posicao muda de", ord_pad06[1], "para", ord_ef06[1],
+        "quando a unidade deixa de contar. Para", termo_c06, ", o beta",
+        "padronizado e", fmt(linha_std06$standardized_beta, 4),
+        "e a inclinacao media e", fmt(linha_ef06$estimate, 4),
+        "t/ha por unidade."))
+```

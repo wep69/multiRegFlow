@@ -1,0 +1,531 @@
+# Reamostragem {#sec-bootstrap}
+
+```{r}
+#| label: setup-05
+#| include: false
+source("_common.R")
+```
+
+O bootstrap e a unica ferramenta deste livro que entrega um intervalo de
+confianca **sem** depender de uma distribuicao de referencia para o estimador.
+Em troca, ele troca uma hipotese por outra: a de que as observacoes podem ser
+reamostradas como se fossem trocadas. Essa hipotese e verificada no capitulo,
+medindo o que muda e o que nao muda quando o tipo de reamostragem muda.
+
+O cenario e o **A**, o ensaio de fertilidade com variancia plantada crescente
+com a argila e tres observacoes deslocadas. E o unico cenario do livro em que
+o modelo de media esta certo e a distribuicao do erro, nao.
+
+```{r}
+#| label: 05-cenario-a
+A <- dados_A()
+fitA <- mr_fit(FORM_A, A, goal = "explanation")
+nA <- nrow(A)
+usar("mr_fit", formula = "FORM_A", data = "dados_A()",
+     goal = "explanation", engine = "ols", tau = 0.5)
+sigma_A <- attr(A, "sigma")
+cat("n =", nA, "| desvio-padrao plantado de", fmt(min(sigma_A), 3),
+    "a", fmt(max(sigma_A), 3), "t/ha\n")
+cat("razao entre o maior e o menor desvio-padrao plantado:",
+    fmt(max(sigma_A) / min(sigma_A), 2), "\n")
+```
+
+A razao da ultima linha e o dado de partida. O desvio-padrao do erro e
+`r fmt(max(sigma_A)/min(sigma_A), 2)` vezes maior nas parcelas de maior argila
+do que nas de menor argila, e nenhum ajuste de MQO corrige isso. E contra essa
+heteroscedasticidade que o tipo de bootstrap vai ser testado.
+
+## Os campos de `mr_bootstrap()`
+
+`mr_bootstrap()` devolve uma lista de oito campos, e eles respondem a
+perguntas diferentes. Dois deles organizam o resto do capitulo: `original` e
+`coefficients`.
+
+```{r}
+#| label: 05-anatomia
+R_BOOT <- 2000L
+usar("mr_bootstrap", x = "mr_fit", R = 2000, type = "wild", seed = 7, conf = 0.95)
+boot0 <- mr_bootstrap(fitA, R = R_BOOT, type = "wild", seed = 7)
+tab(data.frame(campo = names(boot0),
+               dimensao = c("caracter",
+                            "caracter",
+                            "escalar",
+                            "escalar",
+                            paste(nrow(boot0$coefficients), "linhas por",
+                                  ncol(boot0$coefficients), "colunas"),
+                            paste("vetor de", length(boot0$original), "elementos"),
+                            paste("tabela de", nrow(boot0$intervals), "por",
+                                  ncol(boot0$intervals)),
+                            paste("vetor de", length(boot0$sign_stability), "elementos")),
+               o_que_e = c("o tipo de reamostragem usado",
+                           "o tipo de intervalo devolvido",
+                           "o numero de repeticoes pedidos",
+                           "quantas repeticoes produziram ajuste valido",
+                           "cada replicata do MQO, uma linha por repeticao",
+                           "a estimativa original do MQO, calculada uma vez",
+                           "limite inferior, mediana e limite superior de cada coeficiente",
+                           "frequencia com que cada coeficiente mantem o sinal original"),
+               stringsAsFactors = FALSE),
+    caption = paste("Os campos devolvidos por mr_bootstrap. A politica de",
+                    "repeticoes deste capitulo esta declarada no proprio texto: R =",
+                    paste(R_BOOT, collapse = ""), "em todos os blocos de resultado."))
+```
+
+O ponto que organiza o capitulo esta na comparacao entre `original` e
+`coefficients`. `original` tem um valor por coeficiente e **nao muda** com o
+tipo de reamostragem nem com o tipo de intervalo. `coefficients` tem uma linha
+por replicata e muda completamente, porque e a distribuicao de reamostragem.
+
+::: {.callout-important}
+## Bootstrap muda o intervalo, nao o coeficiente
+
+A estimativa puntual e calculada uma unica vez, antes do laco de replicatas, e
+guardada em `original`. O que o bootstrap produz e uma distribuicao a partir da
+qual se extraem limites. Qualquer frase do tipo "o bootstrap mudou o
+coeficiente" esta errada por construcao, e da para provar em uma linha de codigo.
+:::
+
+## As nove combinacoes principais
+
+Sao tres tipos de reamostragem e tres tipos de intervalo. O livro exercita as
+nove, com a mesma semente e o mesmo numero de repeticoes, para que a unica
+variavel que muda entre elas seja a combinacao pedida.
+
+```{r}
+#| label: 05-nove-combinacoes
+tipos_boot <- c("pairs", "residual", "wild")
+tipos_int <- c("percentile", "basic", "normal")
+nome_combo <- function(tp, iv) paste(tp, iv, sep = " / ")
+combo <- expand.grid(intervalo = tipos_int, type = tipos_boot,
+                     stringsAsFactors = FALSE)
+combo$chave <- nome_combo(combo$type, combo$intervalo)
+resultados <- setNames(vector("list", nrow(combo)), combo$chave)
+for (k in seq_len(nrow(combo))) {
+  resultados[[combo$chave[k]]] <- mr_bootstrap(fitA, R = R_BOOT,
+                                                type = combo$type[k],
+                                                interval = combo$intervalo[k],
+                                                seed = 7)
+  usar("mr_bootstrap", x = "mr_fit", R = 2000, type = combo$type[k], seed = 7,
+       conf = 0.95, interval = combo$intervalo[k])
+}
+cat("combinacoes calculadas:", length(resultados), "\n")
+cat("todas com o mesmo numero de replicas:",
+    length(unique(vapply(resultados, function(z) z$R, integer(1)))) == 1L, "\n")
+cat("todas com o mesmo numero de replicas bem-sucedidas:",
+    paste(unique(vapply(resultados, function(z) z$successful_replicates, integer(1))),
+          collapse = ", "), "\n")
+```
+
+A primeira verificacao e a que sustenta a tese do capitulo.
+
+```{r}
+#| label: 05-original-identico
+referencia <- resultados[[1]]$original
+iguais <- vapply(resultados, function(z) isTRUE(all.equal(z$original, referencia)),
+                 logical(1))
+cat("`original` identico em todas as", length(resultados), "combinacoes:",
+    all(iguais), "\n")
+cat("comparacao feita com all.equal(), nao a olho\n")
+cat("dimensoes de `original`:", length(referencia), "coeficientes,",
+    "identico ao do MQO:",
+    isTRUE(all.equal(unname(referencia), unname(coef(fitA$model)))), "\n")
+tab(data.frame(combinacao = names(iguais), original_identico = iguais,
+               stringsAsFactors = FALSE),
+    caption = paste("A coluna `original` e comparavel termo a termo entre as nove",
+                    "combinacoes. Nenhuma delas altera a estimativa puntual."))
+```
+
+A variacao esta inteiramente no intervalo, e ela nao e pequena.
+
+```{r}
+#| label: 05-tabela-larguras
+larg <- function(z, termo) z$intervals[termo, "upper"] - z$intervals[termo, "lower"]
+termo_chave <- "season_rain_mm"
+tab(data.frame(combinacao = names(resultados),
+               lower = fmt(vapply(resultados, function(z) z$intervals[termo_chave, "lower"],
+                                   numeric(1)), 6),
+               mediana = fmt(vapply(resultados, function(z) z$intervals[termo_chave, "median"],
+                                    numeric(1)), 6),
+               upper = fmt(vapply(resultados, function(z) z$intervals[termo_chave, "upper"],
+                                   numeric(1)), 6),
+               largura = fmt(vapply(resultados, larg, numeric(1), termo = termo_chave), 6),
+               replicas_ok = vapply(resultados, function(z) z$successful_replicates,
+                                    integer(1)),
+               stringsAsFactors = FALSE),
+    caption = paste("Intervalo do coeficiente de", termo_chave, "nas nove",
+                    "combinacoes. O intervalo percentile e o basico sao a mesma",
+                    "distribuicao lida emespelhado, e por isso tem a mesma",
+                    "largura; o normal troca os quantis por media e desvio."))
+```
+
+```{r}
+#| label: 05-percentile-basic
+p1 <- resultados[["pairs / percentile"]]$intervals[termo_chave, ]
+p2 <- resultados[["pairs / basic"]]$intervals[termo_chave, ]
+cat("percentile:", fmt(p1["lower"], 6), "a", fmt(p1["upper"], 6), "\n")
+cat("basico    :", fmt(p2["lower"], 6), "a", fmt(p2["upper"], 6), "\n")
+cat("mesma largura?", isTRUE(all.equal(p1["upper"] - p1["lower"],
+                                      p2["upper"] - p2["lower"])), "\n")
+cat("os dois intervalos tem os mesmos extremos, so que rotulados ao contrario?",
+    isTRUE(all.equal(unname(sort(c(p1["lower"], p1["upper"]))),
+                     unname(sort(c(p2["lower"], p2["upper"]))))), "\n")
+cat("a mediana do basico e a mediana do percentile?",
+    isTRUE(all.equal(p1["median"], p2["median"])), "\n")
+cat("mediana do percentile menos estimativa original:",
+    fmt(p1["median"] - resultados[["pairs / percentile"]]$original[termo_chave], 8), "\n")
+cat("largura do intervalo em fracao da estimativa:",
+    fmt((p1["upper"] - p1["lower"]) / resultados[["pairs / percentile"]]$original[termo_chave], 4), "\n")
+```
+
+O intervalo basico e o percentile **espelhado em torno da estimativa**, como
+manda a teoria, e por isso as larguras sao identicas. Os extremos, porem, nao
+sao os mesmos numeros: a transformacao do intervalo basico move cada limite
+para o outro lado da estimativa, e a distribuicao de reamostragem deste ajuste
+nao e simetrica. A mediana, essa sim, e a mesma nos dois intervalos.
+
+```{r}
+#| label: 05-confianca
+b90 <- mr_bootstrap(fitA, R = R_BOOT, type = "wild", conf = 0.90, seed = 7)
+usar("mr_bootstrap", x = "mr_fit", R = 2000, type = "wild", seed = 7,
+     conf = 0.90, interval = "percentile")
+b99 <- mr_bootstrap(fitA, R = R_BOOT, type = "wild", conf = 0.99, seed = 7)
+usar("mr_bootstrap", x = "mr_fit", R = 2000, type = "wild", seed = 7,
+     conf = 0.99, interval = "percentile")
+tab(data.frame(nivel = c("90%", "95%", "99%"),
+               lower = fmt(c(b90$intervals[termo_chave, "lower"],
+                             boot0$intervals[termo_chave, "lower"],
+                             b99$intervals[termo_chave, "lower"]), 6),
+               upper = fmt(c(b90$intervals[termo_chave, "upper"],
+                             boot0$intervals[termo_chave, "upper"],
+                             b99$intervals[termo_chave, "upper"]), 6),
+               largura = fmt(c(larg(b90, termo_chave), larg(boot0, termo_chave),
+                               larg(b99, termo_chave)), 6),
+               original = fmt(c(b90$original[termo_chave], boot0$original[termo_chave],
+                                b99$original[termo_chave]), 6),
+               stringsAsFactors = FALSE),
+    caption = paste("O argumento `conf` muda o intervalo e nao muda `original`.",
+                    "A coluna `original` e a mesma nas tres linhas, o que e a",
+                    "mesma verificacao da secao anterior, agora em outro",
+                    "argumento."))
+```
+
+## A politica de repeticoes, e o aviso que a declara
+
+O pacote aceita um numero de repeticoes pequeno e avisa quando o numero e
+pequeno demais para servir de inferencia. O aviso e uma condicao, e por isso
+pode ser capturado e medido.
+
+```{r}
+#| label: 05-aviso-R
+avisos <- character(0)
+com_R1 <- withCallingHandlers(
+  mr_bootstrap(fitA, R = 1, type = "pairs", seed = 1),
+  warning = function(w) { avisos <<- c(avisos, conditionMessage(w))
+                         invokeRestart("muffleWarning") })
+usar("mr_bootstrap", x = "mr_fit", R = 1, type = "pairs", seed = 1,
+     conf = 0.95, interval = "percentile")
+cat("com R = 1 o pacote avisa:", length(avisos), "vez\n")
+for (a in avisos) cat("  ", a, "\n")
+cat("replicas bem-sucedidas com R = 1:", com_R1$successful_replicates, "\n")
+```
+
+A fronteira do aviso e medida, nao afirmada: ela fica entre o valor que dispara
+o aviso e o primeiro valor que nao dispara.
+
+```{r}
+#| label: 05-fronteira-R
+fronteira <- data.frame(
+  R = c(1L, 2L, 3L, 19L, 20L, 21L),
+  aviso = vapply(c(1L, 2L, 3L, 19L, 20L, 21L), function(rr) {
+    w <- character(0)
+    withCallingHandlers(mr_bootstrap(fitA, R = rr, type = "pairs", seed = 1),
+      warning = function(x) { w <<- c(w, conditionMessage(x))
+                              invokeRestart("muffleWarning") })
+    length(w) > 0L
+  }, logical(1)),
+  stringsAsFactors = FALSE)
+usar("mr_bootstrap", x = "mr_fit", R = 20, type = "pairs", seed = 1,
+     conf = 0.95, interval = "percentile")
+tab(fronteira,
+    caption = paste("Onde termina o aviso. A politica de R deste livro e",
+                    "declarada e unica: os blocos de resultado usam R =",
+                    paste(R_BOOT, collapse = ""), "e nenhum numero de produto",
+                    "deste capitulo sai de uma repeticao curta."))
+cat("menor R sem aviso:", min(fronteira$R[!fronteira$aviso]), "\n")
+cat("mensagem de erro para conf fora do intervalo:\n  ",
+    tryCatch(mr_bootstrap(fitA, R = 30, conf = 1.2), error = function(e) conditionMessage(e)), "\n")
+cat("mensagem de erro para intervalo invalido:\n  ",
+    tryCatch(mr_bootstrap(fitA, R = 30, interval = "central"),
+             error = function(e) conditionMessage(e)), "\n")
+cat("mensagem de erro para tipo invalido:\n  ",
+    tryCatch(mr_bootstrap(fitA, R = 30, type = "jackknife"),
+             error = function(e) conditionMessage(e)), "\n")
+usar("mr_bootstrap", x = "mr_fit", R = 30, type = "jackknife e 'central'",
+     seed = 1, conf = 1.2, interval = "percentile")
+```
+
+## `type = "wild"` no cenario A: o que muda e o que nao muda
+
+Chegamos a medicao central do capitulo. O bootstrap wild usa multiplicadores
+de Rademacher, iguais a mais ou menos um, e **mantem os valores ajustados
+fixos**: a resposta simulada de cada replicata e o valor ajustado mais o
+residuo multiplicado pelo sinal sorteado. Essa e a construcao que nao exige
+que a variancia do erro seja a mesma em todas as observacoes, que e
+exatamente o que o cenario A viola.
+
+```{r}
+#| label: 05-wild-vs-pairs
+boot_pairs <- resultados[["pairs / percentile"]]
+boot_resid <- resultados[["residual / percentile"]]
+tab(data.frame(termo = names(boot0$original),
+               original = fmt(boot0$original, 6),
+               larg_pairs = fmt(vapply(names(boot0$original),
+                                       function(tm) larg(boot_pairs, tm), numeric(1)), 6),
+               larg_residual = fmt(vapply(names(boot0$original),
+                                          function(tm) larg(boot_resid, tm), numeric(1)), 6),
+               larg_wild = fmt(vapply(names(boot0$original),
+                                      function(tm) larg(boot0, tm), numeric(1)), 6),
+               diferenca_relativa = fmt(vapply(names(boot0$original),
+                                               function(tm) (larg(boot0, tm) - larg(boot_pairs, tm)) /
+                                                 larg(boot_pairs, tm), numeric(1)), 4),
+               stringsAsFactors = FALSE),
+    caption = paste("Largura do intervalo de 95% nos tres tipos, com a mesma",
+                    "semente e o mesmo numero de repeticoes. A ultima coluna e",
+                    "a diferenca relativa entre wild e pairs, termo a termo."))
+```
+
+A diferenca existe, e tem sinal que muda de termo para termo. O que ela **nao**
+faz e mudar a decisao.
+
+```{r}
+#| label: 05-diferenca-relativa
+drel <- vapply(names(boot0$original),
+               function(tm) (larg(boot0, tm) - larg(boot_pairs, tm)) / larg(boot_pairs, tm),
+               numeric(1))
+cat("termos cuja largura mudou entre wild e pairs:",
+    sum(drel != 0), "de", length(drel), "\n")
+cat("termos em que o wild deu intervalo mais largo:", sum(drel > 0), "\n")
+cat("termos em que o wild deu intervalo mais estreito:", sum(drel < 0), "\n")
+cat("maior mudanca relativa:", pct(max(abs(drel))), "em",
+    names(drel)[which.max(abs(drel))], "\n")
+cat("menor mudanca relativa:", pct(min(abs(drel))), "em",
+    names(drel)[which.min(abs(drel))], "\n")
+cat("diferenca maxima de largura, em unidades do coeficiente:",
+    fmt(max(abs(vapply(names(boot0$original), function(tm) larg(boot0, tm) - larg(boot_pairs, tm),
+                       numeric(1)))), 5), "\n")
+```
+
+A cobertura da verdade plantada e o teste que importa. Se o intervalo bootstrap
+mudar de largura mas continuar cobrindo o valor verdadeiro nos oito termos, ele
+mudou a **precisao relatada** sem mudar a **conclusao**.
+
+```{r}
+#| label: 05-cobertura-verdade
+verdade <- stats::setNames(
+  c(VERDADE_A[["intercept"]], VERDADE_A[["pH"]], VERDADE_A[["MO"]], 0,
+    VERDADE_A[["P"]], VERDADE_A[["K"]], VERDADE_A[["umidade"]],
+    VERDADE_A[["chuva"]]),
+  c("(Intercept)", "soil_pH", "organic_matter_pct", "clay_pct",
+    "available_P_mg_dm3", "exchangeable_K_mg_dm3", "soil_moisture_pct",
+    "season_rain_mm"))
+cobre <- function(z, tm) verdade[[tm]] >= z$intervals[tm, "lower"] &&
+  verdade[[tm]] <= z$intervals[tm, "upper"]
+tab(data.frame(termo = names(verdade),
+               verdadeiro = fmt(as.numeric(verdade), 5),
+               covers_pairs = vapply(names(verdade), cobre, logical(1),
+                                     z = boot_pairs),
+               covers_residual = vapply(names(verdade), cobre, logical(1),
+                                        z = boot_resid),
+               covers_wild = vapply(names(verdade), cobre, logical(1), z = boot0),
+               stringsAsFactors = FALSE),
+    caption = paste("Cobertura do valor verdadeiro plantado pelo intervalo de",
+                    "95% de cada tipo. A argila nao tem efeito plantado, e por",
+                    "isso o valor de referencia dela e zero."))
+cat("termos com efeito plantado:", length(verdade) - 1L, "de", length(verdade), "\n")
+cat("cobertura, bootstrap de pares:  ",
+    sum(vapply(names(verdade), cobre, logical(1), z = boot_pairs)), "de",
+    length(verdade), "\n")
+cat("cobertura, bootstrap de residuo:",
+    sum(vapply(names(verdade), cobre, logical(1), z = boot_resid)), "de",
+    length(verdade), "\n")
+cat("cobertura, bootstrap wild:      ",
+    sum(vapply(names(verdade), cobre, logical(1), z = boot0)), "de",
+    length(verdade), "\n")
+```
+
+Os tres cobrem a verdade plantada em todos os termos. Este e um resultado
+honesto e um pouco disappointing: **o cenario A nao e um caso em que a escolha
+do tipo de bootstrap resolva alguma coisa**. Ela muda o numero que se relata e
+nao muda nenhuma conclusao.
+
+## O sinal de estabilidade, que e onde a diferenca aparece
+
+`mr_bootstrap()` devolve um campo a mais que os intervalos: `sign_stability`,
+a frequencia com que cada coeficiente mantem o sinal da estimativa original
+ao longo das replicatas. E a metrica que separa os tipos, porque o intervalo
+e largo em quase tudo e a estabilidade do sinal e seletiva.
+
+```{r}
+#| label: 05-estabilidade-sinal
+tab(data.frame(termo = names(boot0$sign_stability),
+               original = fmt(boot0$original, 5),
+               sinal_pairs = fmt(boot_pairs$sign_stability, 4),
+               sinal_residual = fmt(boot_resid$sign_stability, 4),
+               sinal_wild = fmt(boot0$sign_stability, 4),
+               stringsAsFactors = FALSE),
+    caption = paste("Estabilidade do sinal ao longo das replicatas. Um valor",
+                    "abaixo de um mostra que o proprio bootstrap nao consegue",
+                    "defender o sinal daquela estimativa."))
+stab <- data.frame(termo = names(boot0$sign_stability),
+                   wild = as.numeric(boot0$sign_stability),
+                   pairs = as.numeric(boot_pairs$sign_stability),
+                   stringsAsFactors = FALSE)
+menos_estavel <- stab$termo[which.min(stab$wild)]
+menos_estavel_par <- stab$termo[which.min(stab$pairs)]
+cat("termo menos estavel no wild:", menos_estavel, "| valor:",
+    fmt(boot0$sign_stability[menos_estavel], 4), "\n")
+cat("termo menos estavel no bootstrap de pares:", menos_estavel_par, "| valor:",
+    fmt(boot_pairs$sign_stability[menos_estavel_par], 4), "\n")
+cat("efeito plantado do termo menos estavel:",
+    fmt(verdade[[menos_estavel]], 5), "\n")
+cat("diferenca de estabilidade wild menos pares, por termo:\n")
+print(data.frame(termo = stab$termo,
+                 wild_menos_pairs = fmt(stab$wild - stab$pairs, 4),
+                 stringsAsFactors = FALSE), row.names = FALSE)
+```
+
+O termo menos estavel e a argila, que e exatamente a variavel que a variancia
+plantada do cenario A nao acompanha, e que nao tem efeito plantado. A
+estabilidade de sinal e, sozinha, a saida mais informativa do bootstrap neste
+cenario: ela aponta a unica coluna cuja estimativa o proprio procedimento nao
+consegue defender.
+
+```{r}
+#| label: 05-figura-estabilidade
+ggplot(data.frame(termo = stab$termo, wild = stab$wild, pairs = stab$pairs),
+       aes(x = termo)) +
+  geom_hline(yintercept = 1, linetype = "dotted", colour = CINZA) +
+  geom_point(aes(y = wild), colour = ROXO, size = 2.8) +
+  geom_point(aes(y = pairs), colour = LARANJA, size = 2.8) +
+  geom_segment(aes(y = pairs, yend = wild), colour = CINZA, linewidth = 0.6) +
+  coord_flip() +
+  labs(x = NULL, y = "Estabilidade do sinal",
+       title = "A estabilidade do sinal e onde os tipos se separam",
+       subtitle = paste("Roxo: wild. Laranja: pares. A argila e a unica coluna",
+                        "que os dois tipos concordam em marcar como instavel")) +
+  tema_pacote()
+```
+
+```{r}
+#| label: 05-figura-largura
+dados_larg <- data.frame(
+  termo = rep(names(boot0$original), 3),
+  tipo = rep(c("pairs", "residual", "wild"), each = length(boot0$original)),
+  largura = c(vapply(names(boot0$original), function(tm) larg(boot_pairs, tm), numeric(1)),
+              vapply(names(boot0$original), function(tm) larg(boot_resid, tm), numeric(1)),
+              vapply(names(boot0$original), function(tm) larg(boot0, tm), numeric(1))),
+  stringsAsFactors = FALSE)
+ggplot(dados_larg, aes(tipo, largura, fill = tipo)) +
+  geom_col(position = "dodge", width = 0.7) +
+  scale_y_continuous(trans = "sqrt") +
+  scale_fill_manual(values = c("pairs" = LARANJA, "residual" = CINZA,
+                               "wild" = ROXO), guide = "none") +
+  facet_wrap(~ termo, scales = "free", ncol = 4) +
+  labs(x = NULL, y = "Largura do IC de 95% (escala raiz)",
+       title = "A largura do intervalo muda com o tipo, termo a termo",
+       subtitle = paste("Escala raiz para caber o intercepto e o efeito de chuva",
+                        "no mesmo painel")) +
+  tema_pacote(8)
+```
+
+## O wild bootstrap nao e o que mais se aproxima da covarianca robusta
+
+Este e o segundo achado medido do capitulo, e ele vai contra a expectativa
+formada pela teoria. A razao de o bootstrap wild ser recomendado sob
+heteroscedasticidade e que ele nao depende da hipotese de homocedasticidade. A
+pergunta natural e: o desvio-padrao das replicatas wild aproxima melhor o
+desvio-padrao robusto do sandwich? A resposta medida neste cenario e **nao**.
+
+```{r}
+#| label: 05-wild-vs-hc3
+iv_hc3 <- mr_inference(fitA, "HC3")
+usar("mr_inference", x = "mr_fit", vcov = "HC3", cluster = "NULL", conf = 0.95)
+se_boot <- function(z) apply(z$coefficients, 2, sd, na.rm = TRUE)
+d <- data.frame(termo = iv_hc3$term,
+                se_HC3 = iv_hc3$std_error,
+                se_pairs = se_boot(boot_pairs)[iv_hc3$term],
+                se_residual = se_boot(boot_resid)[iv_hc3$term],
+                se_wild = se_boot(boot0)[iv_hc3$term],
+                stringsAsFactors = FALSE)
+d$dist_pairs <- abs(d$se_pairs - d$se_HC3) / d$se_HC3
+d$dist_residual <- abs(d$se_residual - d$se_HC3) / d$se_HC3
+d$dist_wild <- abs(d$se_wild - d$se_HC3) / d$se_HC3
+tab(data.frame(termo = d$termo,
+               se_HC3 = fmt(d$se_HC3, 5),
+               se_pairs = fmt(d$se_pairs, 5),
+               se_wild = fmt(d$se_wild, 5),
+               dist_pairs_HC3 = pct(d$dist_pairs),
+               dist_wild_HC3 = pct(d$dist_wild),
+               stringsAsFactors = FALSE),
+    caption = paste("Desvio-padrao das replicatas contra o desvio-padrao robusto",
+                    "HC3, e a distancia relativa de cada um ate ele."))
+cat("distancia media ate HC3 -- pares:", pct(mean(d$dist_pairs)),
+    "| residuo:", pct(mean(d$dist_residual)), "| wild:", pct(mean(d$dist_wild)), "\n")
+cat("distancia maxima ate HC3 -- pares:", pct(max(d$dist_pairs)),
+    "| residuo:", pct(max(d$dist_residual)), "| wild:", pct(max(d$dist_wild)), "\n")
+cat("termos em que o wild chega mais perto de HC3:", sum(d$dist_wild < d$dist_pairs),
+    "de", nrow(d), "\n")
+```
+
+O bootstrap de pares chega mais perto da covarianca robusta, em media e no maximo, e o wild
+ganha em parte dos termos. A leitura honesta e que **nenhum dos dois eh uma
+aproximacao melhor do outro por construcao neste cenario**: o numero de
+replicatas ainda e modesto, o cenario tem tres outliers plantados, e a
+comparacao com a covarianca robusta e uma verificacao de plausibilidade, nao um teorema.
+
+O que a construcao garante, e o que a medicao nao pode Medir, e que o wild
+**nao faz nenhuma hipotese sobre a variancia do erro**. Essa e a razao
+teorica, e ela independe de quantas replicatas se usam.
+
+## A decisao do capitulo
+
+```{r}
+#| label: 05-decisao-calculos
+dec_tipo <- "wild"
+dec_R <- R_BOOT
+dec_larg_max <- max(abs(drel))
+dec_termo_larg <- names(drel)[which.max(abs(drel))]
+dec_cob_wild <- sum(vapply(names(verdade), cobre, logical(1), z = boot0))
+dec_cob_pairs <- sum(vapply(names(verdade), cobre, logical(1), z = boot_pairs))
+dec_stab_wild <- boot0$sign_stability[menos_estavel]
+dec_stab_pairs <- boot_pairs$sign_stability[menos_estavel]
+dec_replicas_wild <- boot0$successful_replicates
+dec_media_wild <- mean(d$dist_wild)
+dec_media_pairs <- mean(d$dist_pairs)
+dec_okrep_R1 <- com_R1$successful_replicates
+```
+
+```{r}
+#| label: fechar-05
+salvar_uso("05")
+salvar_decisoes("05",
+  paste("No cenario A, relatar o intervalo de bootstrap do tipo wild, com",
+        "intervalo percentile e o numero de repeticoes declarado neste",
+        "capitulo, e usar a estabilidade de sinal como leitura complementar do",
+        "intervalo."),
+  paste("As", length(resultados), "combinacoes de tipo e de intervalo devolvem",
+        "um campo `original` identico por all.equal(), e todas cobrem a verdade",
+        "plantada em", dec_cob_wild, "de", length(verdade), "termos, tanto no wild",
+        "quanto no bootstrap de pares (", dec_cob_pairs, "de", length(verdade),
+        "). A escolha do tipo muda a largura do intervalo em ate",
+        pct(dec_larg_max), "em", dec_termo_larg, ", sem mudar nenhuma conclusao.",
+        "O que separa os tipos e a estabilidade de sinal: o wild marca",
+        menos_estavel, "com", fmt(dec_stab_wild, 4), "contra",
+        fmt(dec_stab_pairs, 4), "no bootstrap de pares, sendo esse o termo sem",
+        "efeito plantado. Com R =", dec_R, "o wild conclui",
+        dec_replicas_wild, "replicas de", dec_R,
+        "; com uma unica replicata o pacote avisa e so conclui",
+        dec_okrep_R1, "replica. Em troca, o wild NAO e o que mais se aproxima da",
+        "covarianca robusta: distancia media", pct(dec_media_wild), "contra",
+        pct(dec_media_pairs), "do bootstrap de pares."))
+```

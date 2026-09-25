@@ -1,0 +1,570 @@
+# Colinearidade e inferencia {#sec-colinear}
+
+```{r}
+#| label: setup-03
+#| include: false
+source("_common.R")
+```
+
+Este capitulo junta duas perguntas que a pratica costuma tratar separadas. A
+primeira e quanto o modelo consegue distinguir uma variavel da outra. A segunda
+e quanto se sabe sobre os coeficientes depois que essa separacao e perdida. Sao
+perguntas distintas, com respostas distintas, e o erro comum e responder a
+segunda com a primeira.
+
+O cenario usado aqui e o **B**, do capitulo @sec-dados: argila, CEC e areia sao
+a mesma propriedade fisica do solo medida tres vezes. Isso e proposital. Um
+VIF alto assim nao e um defeito do ajuste nem um problema do dado: e uma
+descricao fiel do desenho amostral, e o que se faz com essa descricao e a
+questao que interessa.
+
+```{r}
+#| label: 03-cenario-b
+B <- dados_B()
+FORM_B <- yield_t_ha ~ clay_pct + CEC_cmolc_dm3 + sandy_pct + soil_pH +
+  available_P_mg_dm3 + exchangeable_K_mg_dm3 + season_rain_mm
+fitB <- mr_fit(FORM_B, B, goal = "explanation")
+nB <- nrow(B); pB <- ncol(model.matrix(fitB$model)) - 1L
+usar("mr_fit", formula = "FORM_B", data = "dados_B()",
+     goal = "explanation", engine = "ols", tau = 0.5)
+cat("n =", nB, "| preditores =", pB, "\n")
+```
+
+## Os seis elementos de `mr_collinearity()`
+
+`mr_collinearity()` devolve uma lista com seis elementos. Nenhum deles e
+decorativo: cada um responde a uma pergunta diferente sobre a mesma
+redundancia, e os dois juntos formam a leitura completa.
+
+```{r}
+#| label: 03-anatomia
+col <- mr_collinearity(fitB)
+usar("mr_collinearity", x = "mr_fit")
+tab(data.frame(elemento = names(col),
+               pergunta = c("Quanto de cada preditor e explicado pelos outros?",
+                            "A matriz do modelo e estavel na inversao?",
+                            "Qual variancia de estimacao se concentra em qual direcao?",
+                            "Quais pares de preditores sao quase o mesmo numero?",
+                            "O que o pacote performance diz do mesmo ajuste?",
+                            "O que se deve fazer com tudo isso?"),
+               forma = c("data.frame, uma linha por preditor, com duas bandeiras",
+                         "data.frame, uma linha por dimensao singular",
+                         "matriz, preditores por dimensoes",
+                         "data.frame, uma linha por par, ja ordenado por |r|",
+                         "data.frame do pacote performance, quando ele esta instalado",
+                         "texto fixo do pacote"),
+               stringsAsFactors = FALSE),
+    caption = paste("Os seis elementos devolvidos por mr_collinearity, com a",
+                    "pergunta que cada um responde. O ultimo e texto, nao tabela:",
+                    "o pacote escreve uma vez a orientacao de leitura e nao a repete",
+                    "por linha."))
+```
+
+O VIF e a tolerancia sao o mesmo numero visto de dois lados: a tolerancia e
+`1 / VIF`. O que muda e o limiar, porque um implica "explico por quase nada" e o
+outro implica "explico por quase tudo".
+
+```{r}
+#| label: 03-tabela-vif
+vif_tab <- col$VIF
+tab(data.frame(preditor = vif_tab$term,
+               VIF = fmt(vif_tab$VIF, 2),
+               tolerancia = fmt(vif_tab$tolerance, 4),
+               acima_de_5 = vif_tab$flag_vif5,
+               acima_de_10 = vif_tab$flag_vif10,
+               relacao = ifelse(vif_tab$flag_vif10, "acima dos dois limiares",
+                                ifelse(vif_tab$flag_vif5, "acima do limiar menor",
+                                       "abaixo dos dois limiares"))),
+    caption = paste("VIF, tolerancia e as duas bandeiras do proprio pacote.",
+                    "As bandeiras sao calculadas com limiar fixo no codigo e",
+                    "apenas sinalizam: nenhuma delas remove variavel."))
+```
+
+Os tres primeiros preditores passam pelas duas bandeiras, e a diferenca entre
+eles e de ordem de grandeza, nao de grau. Os quatro restantes ficam colados ao
+limiar inferior, o que confirma que a redundancia esta confinada ao grupo da
+textura.
+
+```{r}
+#| label: 03-tabela-ci
+ci <- col$condition_index
+tab(data.frame(dimensao = ci$dimension,
+               indice = fmt(ci$condition_index, 2),
+               acima_de_15 = ci$flag_ci15,
+               acima_de_30 = ci$flag_ci30),
+    caption = paste("Indice de condicao por dimensao singular da matriz de",
+                    "preditores. O indice e a razao entre o maior e o menor",
+                    "valor singular, o que mede quanto a inversao da matriz e",
+                    "estavel."))
+```
+
+O indice de condicao responde a um idioma diferente do VIF, e por isso ele e
+interessante aqui. O VIF pergunta quanto uma coluna e prevista pelas outras. O
+indice de condicao pergunta se existe uma **direcao no espaco dos preditores**
+que quase nao carrega variancia. Quando essa direcao existe e o ajuste depende
+de uma diferenca de dois numeros quase iguais, o erro-padrao dos coeficientes
+involucrados cresce sem que nenhum preditor esteja individualmente suspects.
+
+```{r}
+#| label: 03-var-decomp
+vd <- col$variance_decomposition
+peito <- rownames(vd)[apply(vd, 1, max) > 0.5]
+tab(data.frame(preditor = peito,
+               dimensao_da_maior_carga = paste0("Dim", apply(vd[peito, , drop = FALSE], 1,
+                                                             which.max)),
+               maior_proporcao = fmt(apply(vd[peito, , drop = FALSE], 1, max), 4),
+               vetor = "preditor entra na dimensao mal condicionada"),
+    caption = paste("Decomposicao de variancia, lida pelo limiar de metade da",
+                    "carga. Uma proporcao alta nessa linha significa que aquele",
+                    "preditor participa da direcao mal condicionada da matriz."))
+tab(data.frame(preditor = rownames(vd),
+               carga = fmt(apply(vd, 1, max), 4),
+               dimensao = paste0("Dim", apply(vd, 1, which.max)),
+               dimensao_mais_gravem = apply(vd, 1, max) > 0.5,
+               stringsAsFactors = FALSE),
+    caption = paste("A mesma tabela para todos os preditores. Repare que as tres",
+                    "primeiras linhas sao exatamente o trio de textura, e que",
+                    "elas nao se distinguem entre si: e a mesma direcao mal",
+                    "condicionada, dividida entre tres colunas."))
+```
+
+A decomposicao de variancia completa a leitura porque mostra **quantos**
+preditores entram na mesma direcao mal condicionada. O indice de condicao
+isolado diz que a matriz e instavel; a decomposicao diz que a instabilidade e
+compartilhada pelo trio de textura, e nao responsabilidade de um preditor
+sozinho.
+
+```{r}
+#| label: 03-corr-pares
+corr <- col$correlations
+tab(data.frame(preditor_1 = corr$term1, preditor_2 = corr$term2,
+               r = fmt(corr$correlation, 4), r_absoluto = fmt(corr$abs_correlation, 4)),
+    caption = paste("Pares de preditores, ja ordenados do mais correlacionado para",
+                    "o menos. O elemento `correlations` e, por construcao, a",
+                    "tabela mais curta que explica a colinearidade deste ajuste."))
+```
+
+O par de topo e argila e CEC, e o segundo e argila e areia. Os tres pares do
+grupo de textura ocupam as tres primeiras posicoes, e o quarto par ja cai
+para uma correlacao de ordem completamente diferente. Isso delimita o problema:
+ele nao esta espalhado pelo modelo, esta confinado a um grupo.
+
+```{r}
+#| label: 03-figura-par-redundante
+ggplot(B, aes(clay_pct, CEC_cmolc_dm3, colour = sandy_pct)) +
+  geom_point(size = 2, alpha = .8) +
+  scale_colour_gradient(low = LARANJA, high = ROXO, name = "Areia (%)") +
+  annotate("text", x = min(B$clay_pct), y = max(B$CEC_cmolc_dm3),
+           label = paste0("r = ", fmt(cor(B$clay_pct, B$CEC_cmolc_dm3), 4),
+                          " entre argila e CEC;\n",
+                          "a cor da areia e a terceira copia da mesma informacao"),
+           hjust = 0, vjust = 1, colour = "grey25", size = 3.4) +
+  labs(x = "Argila (%)", y = "CEC (cmolc/dm3)",
+       title = "Tres medidas, uma propriedade: o trio redundante",
+       subtitle = "Cada ponto e uma parcela; a nuvem e unica nas tres dimensoes") +
+  tema_pacote()
+```
+
+```{r}
+#| label: 03-figura-vif
+vif_ord <- vif_tab[order(-vif_tab$VIF), ]
+ggplot(vif_ord, aes(factor(term), VIF)) +
+  geom_hline(yintercept = c(5, 10), linetype = "dashed", colour = CINZA) +
+  geom_col(fill = ifelse(vif_ord$flag_vif10, VERM,
+                         ifelse(vif_ord$flag_vif5, LARANJA, VERDE))) +
+  geom_text(aes(label = fmt(VIF, 1)), vjust = -0.4, size = 3.1) +
+  scale_y_continuous(trans = "log10") +
+  labs(x = NULL, y = "VIF (escala log)",
+       title = "A colinearidade esta confinada a um grupo de preditores",
+       subtitle = paste("Linhas tracejadas: os limiares de",
+                        fmt(5, 0), "e", fmt(10, 0),
+                        "do proprio pacote. Escala log para caber o intervalo todo")) +
+  tema_pacote()
+```
+
+## A inconsistencia entre as duas tabelas de VIF
+
+`mr_collinearity()` traz **duas** tabelas de VIF, e elas nao concordam no nome
+das colunas. A primeira vem do proprio pacote; a segunda vem do pacote
+`performance`, que o `multiRegFlow` chama quando o encontra instalado. Para
+quem le o resultado no console e para quem programa em cima, essa diferenca
+nao e cosmetica: um `tbl$VIF$VIF` funciona e um `tbl$VIF$Tolerance` devolve
+`NULL`, porque as duas tabelas nao usam a mesma convencao de nome.
+
+```{r}
+#| label: 03-duas-tabelas
+top3 <- vif_tab$term[vif_tab$flag_vif10]
+pkg_tab <- data.frame(
+  coluna_do_pacote = c("term", "VIF", "tolerance", "flag_vif5", "flag_vif10"),
+  pacote = c("nome do preditor", "variacao inflada do estimador",
+             "1 / VIF", "VIF >= 5", "VIF >= 10"))
+perf_tab <- data.frame(
+  coluna_do_performance = names(col$performance),
+  performance = c("nome do preditor", "mesmo VIF do pacote",
+                  "limite inferior do IC de 95% do VIF",
+                  "limite superior do IC de 95% do VIF",
+                  "VIF ajustado pelo numero de preditores",
+                  "mesma tolerancia do pacote",
+                  "limite inferior do IC de 95% da tolerancia",
+                  "limite superior do IC de 95% da tolerancia"))
+tab(pkg_tab, caption = paste("Tabela de VIF do proprio pacote: cinco colunas, com",
+                             "o nome do preditor em minusculo e duas bandeiras",
+                             "booleanas que o performance nao tem."))
+tab(perf_tab, caption = paste("Tabela de VIF do pacote performance: oito colunas,",
+                              "com o nome do preditor em maiuscula, intervalos",
+                              "de confianca e o VIF ajustado. Nao existe nenhuma",
+                              "coluna de bandeira."))
+```
+
+As tres linhas do grupo redundante mostram que, apesar da diferenca de nomes, os
+**valores** do VIF e da tolerancia sao os mesmos. O que muda e o que cada tabela
+oferece: o pacote oferece bandeira, o `performance` oferece incerteza.
+
+```{r}
+#| label: 03-tres-linhas
+perf3 <- col$performance[match(top3, col$performance$Term), ]
+tab(data.frame(preditor = perf3$Term,
+               VIF_pacote = fmt(vif_tab$VIF[vif_tab$flag_vif10], 2),
+               VIF_performance = fmt(perf3$VIF, 2),
+               VIF_CI_low = fmt(perf3$VIF_CI_low, 2),
+               VIF_CI_high = fmt(perf3$VIF_CI_high, 2),
+               tolerancia_pacote = fmt(vif_tab$tolerance[vif_tab$flag_vif10], 4),
+               tolerancia_performance = fmt(perf3$Tolerance, 4),
+               iguais = fmt(vif_tab$VIF[vif_tab$flag_vif10], 6) ==
+                 fmt(perf3$VIF, 6)),
+    caption = paste("As tres linhas do grupo redundante nas duas tabelas. A coluna",
+                    "`iguais` compara os VIF com seis casas decimais. O que muda",
+                    "nao e o numero: e o nome da coluna e a informacao adicional."))
+```
+
+```{r}
+#| label: 03-acesso-inconsistente
+acesso_teste <- list(
+  "tbl$VIF$VIF"          = class(col$VIF$VIF),
+  "tbl$VIF$Tolerance"    = class(col$VIF$Tolerance),
+  "tbl$performance$VIF"  = class(col$performance$VIF),
+  "tbl$performance$flag_vif10" = class(col$performance$flag_vif10))
+tab(data.frame(expressao = names(acesso_teste),
+               o_que_devolve = unlist(acesso_teste),
+               quebra = c("funciona", "NULL: a coluna nao existe neste elemento",
+                          "funciona", "NULL: a coluna nao existe neste elemento"),
+               stringsAsFactors = FALSE),
+    caption = paste("O teste e a diferenca de nome virando erro silencioso. Nenhuma",
+                    "das quatro expressas gera erro; duas devolvem NULL e seguem."))
+```
+
+::: {.callout-important}
+## O que fazer com isso, na pratica
+
+Escolha a tabela uma vez, no comeco do script, e guarde o resultado em uma
+variavel com nome proprio. Depois use so essa. Misturar as duas convencoes no
+mesmo script e a forma mais facil de escrever um `NULL` que se disfarca de
+ausencia de problema. Se o seu pipeline precisa das bandeiras booleanas, use a
+tabela do pacote; se precisa do intervalo de confianca do VIF, use a do
+`performance`.
+:::
+
+## VIF alto aqui nao e defeito, e o pacote nao manda remover nada
+
+O ponto pedagogico do cenario B e que um VIF de tres digitos **nao e um
+defeito do ajuste**. E informacao redundante que o desenho do dado carrega: as
+tres medidas de textura descrevem a mesma variavel latente, e o modelo foi
+escrito incluindo as tres. O VIF alto diz que o modelo nao consegue separar
+quanto cada uma contribui. Nao diz que o modelo esta errado.
+
+E o que `mr_recommend()` faz com essa informacao e a prova executavel da tese.
+
+```{r}
+#| label: 03-recomendacao
+recB <- mr_recommend(fitB)
+usar("mr_recommend", x = "mr_fit")
+tab(recB[, c("domain", "finding", "priority", "recommendation")],
+    caption = paste("As recomendacoes do pacote para o cenario B, que tem o maior",
+                    "VIF de todo o livro. A coluna `finding` nomeia o problema; a",
+                    "coluna `recommendation` diz o que ele propoe a fazer."))
+```
+
+Repare que a linha de maior prioridade **existe** e o nome do dominio e
+`collinearity`. O que nao existe, em nenhuma linha, e uma proposta de remocao.
+A recomendacao do pacote e explicitamente o contrario: reter os termos exigidos
+pela ciencia e comparar o MQO com a estabilidade de coeficientes do ridge.
+
+```{r}
+#| label: 03-nunca-remover
+textos <- c(col$interpretation, recB$recommendation)
+termos_proibidos <- c("remov", "drop", "exclu", "delet", "elimin")
+contexto <- lapply(termos_proibidos, function(tp) {
+  i <- which(grepl(tp, tolower(textos)))
+  if (length(i) == 0L) return(NA_character_)
+  vapply(i, function(k) {
+    txt <- textos[k]; pos <- regexpr(tp, tolower(txt))
+    substr(txt, max(1L, pos - 34L), min(nchar(txt), pos + 40L))
+  }, character(1))
+})
+achados <- data.frame(termo = termos_proibidos,
+                      ocorrencias = vapply(termos_proibidos,
+                                           function(tp) sum(grepl(tp, tolower(textos))),
+                                           integer(1)),
+                      contexto = vapply(contexto, function(z) paste(z, collapse = " || "),
+                                        character(1)),
+                      stringsAsFactors = FALSE)
+tab(data.frame(termo = achados$termo, ocorrencias = achados$ocorrencias,
+               contexto = achados$contexto, stringsAsFactors = FALSE),
+    caption = paste("Busca literal, sem diferenciar maiusculas, por termos de",
+                    "remocao em todos os textos de recomendacao do cenario B.",
+                    "As ocorrencias que existem estao nas duas frases que",
+                    "PROIBEM a remocao, e nenhuma a recomenda."))
+cat("textos examinados:", length(textos), "| familias com ocorrencia:",
+    sum(achados$ocorrencias > 0), "de", nrow(achados), "\n")
+```
+
+O mesmo pacote, no mesmo ajuste, tem o maior VIF do livro e recomenda retencao.
+Nao ha como ler essa saida como autorizacao para apagar variavel.
+
+## `mr_inference()`: a covarianca robusta muda a incerteza, nao a estimativa
+
+`mr_inference()` devolve uma tabela com dez colunas. Duas delas merecem atencao
+imediata porque mudam de significado conforme a opcao escolhida: `df` e
+`clusters`.
+
+```{r}
+#| label: 03-inferencia-classico-hc3
+iv_cl <- mr_inference(fitB, "classical")
+iv_h3 <- mr_inference(fitB, "HC3")
+usar("mr_inference", x = "mr_fit", vcov = "classical", conf = 0.95)
+usar("mr_inference", x = "mr_fit", vcov = "HC3", cluster = "NULL", conf = 0.95)
+estimativas_iguais <- isTRUE(all.equal(iv_cl$estimate, iv_h3$estimate))
+razao_se <- iv_h3$std_error / iv_cl$std_error
+tab(data.frame(termo = iv_cl$term,
+               estimativa = fmt(iv_cl$estimate, 4),
+               se_classico = fmt(iv_cl$std_error, 4),
+               se_HC3 = fmt(iv_h3$std_error, 4),
+               razao = fmt(razao_se, 3),
+               p_classico = fmt_p(iv_cl$p_value),
+               p_HC3 = fmt_p(iv_h3$p_value)),
+    caption = paste("MQO classico contra HC3 no mesmo ajuste. A coluna `razao` e",
+                    "o erro-padrao HC3 dividido pelo classico: acima de 1 o HC3 e",
+                    "mais conservador, abaixo de 1 e menos."))
+```
+
+A comparacao de estimativas foi feita com `all.equal()` e nao a olho, e o
+resultado e que elas sao identicas. Isso nao e acaso: o estimador de MQO e o
+mesmo nos dois casos, e o que muda e **apenas** a matriz de covarianca usada
+para produzir o erro-padrao, a estatistica e o intervalo.
+
+```{r}
+#| label: 03-inferencia-comparacao
+cat("all.equal das estimativas, classico contra HC3:", estimativas_iguais, "\n")
+cat("maximo de mudanca relativa no erro-padrao:",
+    pct(max(abs(razao_se - 1))), "\n")
+cat("numero de termos com erro-padrao maior no HC3:",
+    sum(razao_se > 1), "de", length(razao_se), "\n")
+cat("numero de termos cuja conclusao de 5% muda:",
+    sum((iv_cl$p_value < 0.05) != (iv_h3$p_value < 0.05)), "\n")
+cat("df classico:", unique(iv_cl$df), "| df HC3:", unique(iv_h3$df), "\n")
+cat("coluna clusters, classico:", unique(iv_cl$clusters),
+    "| HC3:", unique(iv_h3$clusters), "\n")
+cat("classe do valor:", class(iv_cl$clusters), "\n")
+```
+
+A coluna `clusters` vem preenchida com `NA` sempre que a covarianca nao e
+agrupada, e o pacote nao a omite nesse caso. Isso e uma boa noticia para quem
+programa: a mesma consulta funciona nos dois modos, e o valor `NA` significa
+exatamente "esta inferencia nao esta agrupada".
+
+## O achado: um vetor continuo nao produz aviso nenhum
+
+Aqui esta o achado mais importante do capitulo, e ele ja foi medido por
+execucao. O codigo do pacote valida o comprimento do vetor de agrupamento e
+exige um minimo de dois agrupamentos distintos. Nao existe nenhuma verificacao
+de que o agrupamento seja, de fato, um agrupamento. Tudo o que o codigo pede e
+um vetor com um valor por linha.
+
+```{r}
+#| label: 03-cluster-e
+E <- dados_E()
+FORM_E <- grain_yield_t_ha ~ N_rate_kg_ha + P_rate_kg_ha + exchangeable_K_mg_dm3
+fitE <- mr_fit(FORM_E, E, goal = "explanation")
+usar("mr_fit", formula = "FORM_E", data = "dados_E()",
+     goal = "explanation", engine = "ols", tau = 0.5)
+nE <- nrow(E)
+iv_bloco <- mr_inference(fitE, "cluster", cluster = E$bloco)
+usar("mr_inference", x = "mr_fit", vcov = "cluster", cluster = "E$bloco", conf = 0.95)
+```
+
+Com o fator de bloco, o resultado e o que a teoria manda: o numero de
+agrupamentos observados, e graus de liberdade de referencia iguais ao numero de
+agrupamentos menos um.
+
+```{r}
+#| label: 03-cluster-continuo
+iv_continuo <- mr_inference(fitE, "cluster", cluster = E$N_rate_kg_ha)
+tab(data.frame(
+  chamada = c("cluster = E$bloco (fator, 6 niveis)",
+              "cluster = E$N_rate_kg_ha (continuo)"),
+  tipo_do_argumento = c("fator", "numerico continuo"),
+  n_observacoes = c(nE, nE),
+  clusters = c(unique(iv_bloco$clusters), unique(iv_continuo$clusters)),
+  df = c(unique(iv_bloco$df), unique(iv_continuo$df)),
+  observacoes_por_agrupamento = c(
+    nE / unique(iv_bloco$clusters), nE / unique(iv_continuo$clusters))),
+  caption = paste("As duas chamadas lado a lado. A segunda NAO produz erro e NAO",
+                  "produz aviso: a verificacao do pacote e de comprimento e de",
+                  "numero minimo de agrupamentos, e um vetor continuo satisfaz",
+                  "as duas."))
+```
+
+A segunda linha e o achado. Passar uma variavel continua como agrupamento cria
+um agrupamento degenerado: quase cada observacao e o seu proprio agrupamento. O
+resultado tem aparencia perfeitamente normal, tem coeficientes, tem erro-padrao,
+tem p-valor, e **nao tem nada de errado visivel** a nao ser a coluna `clusters`.
+
+::: {.callout-warning}
+## A licao correta nao e "o pacote esta quebrado"
+
+O pacote **grava** o numero de agrupamentos na saida. Ele valida comprimento e
+exige no minimo dois agrupamentos, e depois registra quantos agrupamentos
+foram de fato observados. A verificacao que falta e do usuario, e ela custa
+uma leitura de coluna.
+
+Observacoes por agrupamento menores que cerca de dez nao sustentam inferencia
+agrupada: a distribuicao do estimador agrupado se aproxima da normal em um
+ritmo que depende do numero de agrupamentos, e nao do numero de observacoes. Um
+modelo com poucas unidades experimentais e muitas medidas por unidade e o caso
+exato em que essa distincao decide o resultado.
+:::
+
+A leitura pratica cabe em uma linha: **leia a coluna `clusters` antes de
+reportar qualquer intervalo agrupado**. Ela e o unico campo da saida que
+distingue inferencia agrupada de inferencia que so parece agrupada.
+
+```{r}
+#| label: 03-cluster-tres-formas
+iv_coluna <- mr_inference(fitE, "cluster", cluster = "bloco")
+iv_formula <- mr_inference(fitE, "cluster", cluster = ~ bloco)
+cat("mesmas tres formas de passar o agrupamento\n")
+cat("  vetor  : clusters =", unique(iv_bloco$clusters),
+    "| df =", unique(iv_bloco$df), "\n")
+cat("  coluna : clusters =", unique(iv_coluna$clusters),
+    "| df =", unique(iv_coluna$df), "\n")
+cat("  formula: clusters =", unique(iv_formula$clusters),
+    "| df =", unique(iv_formula$df), "\n\n")
+cat("vetor e coluna devolvem a mesma tabela?",
+    isTRUE(all.equal(iv_bloco, iv_coluna)), "\n")
+cat("vetor e formula devolvem a mesma tabela?",
+    isTRUE(all.equal(iv_bloco, iv_formula)), "\n")
+cat("clusters / observacoes no agrupamento degenerado:",
+    fmt(nE / unique(iv_continuo$clusters), 3), "\n")
+cat("clusters / observacoes no agrupamento correto:",
+    fmt(nE / unique(iv_bloco$clusters), 3), "\n")
+```
+
+As tres formas de passar o agrupamento sao intercambiaveis, e devolvem a mesma
+tabela byte a byte. A unica forma perigosa e a que nao parece agrupamento: o
+vetor numerico continuo, que produz a contagem de agrupamentos mais alta de
+todas e por isso mesmo passa despercebida.
+
+## As validacoes que o pacote realmente faz
+
+O que segue e o contraponto: as condicoes que o codigo checa de fato produzem
+erro com mensagem util. Vale saber onde esta o limite entre "o pacote me
+proteg" e "o pacote me deixou passar".
+
+```{r}
+#| label: 03-erros-inferencia
+erros <- data.frame(
+  chamada = c('mr_inference(fitE, "cluster")',
+              'mr_inference(fitE, "cluster", cluster = E$bloco[1:10])',
+              'mr_inference(fitE, "cluster", cluster = rep(1, nrow(E)))',
+              'mr_inference(fitE, "cluster", cluster = "coluna_que_nao_existe")',
+              'mr_inference(fitE, "HC3", conf = 1.5)',
+              'mr_inference(fitE, "HCX")'),
+  o_que_tenta = c("agrupar sem informar agrupamento",
+                  "informar menos agrupamentos que observacoes",
+                  "informar um unico agrupamento",
+                  "nomear uma coluna inexistente",
+                  "pedir nivel de confianca fora do intervalo",
+                  "pedir um estimador de covarianca que nao existe"),
+  erro = c(tryCatch(mr_inference(fitE, "cluster"), error = function(e) conditionMessage(e)),
+           tryCatch(mr_inference(fitE, "cluster", cluster = E$bloco[1:10]),
+                    error = function(e) conditionMessage(e)),
+           tryCatch(mr_inference(fitE, "cluster", cluster = rep(1, nrow(E))),
+                    error = function(e) conditionMessage(e)),
+           tryCatch(mr_inference(fitE, "cluster", cluster = "coluna_que_nao_existe"),
+                    error = function(e) conditionMessage(e)),
+           tryCatch(mr_inference(fitE, "HC3", conf = 1.5),
+                    error = function(e) conditionMessage(e)),
+           tryCatch(mr_inference(fitE, "HCX"), error = function(e) conditionMessage(e))),
+  stringsAsFactors = FALSE)
+tab(erros, caption = paste("Seis chamadas recusadas, todas com mensagem. Observe",
+                           "que a ultima devolve a lista completa de opcoes",
+                           "aceitas, o que e a forma mais util de erro possible."))
+```
+
+A opcao invalida devolve a lista de todos os estimadores aceitos, e nao apenas
+o nome que o usuario digitou. Para quem escreve script, essa e a mensagem mais
+barata de aprender a API: ela e a documentacao executavel do argumento.
+
+```{r}
+#| label: 03-erro-lista-opcoes
+assinatura <- eval(formals(mr_inference)$vcov)
+formals(mr_inference)$vcov <- NULL
+mensagem_hcx <- erros$erro[6]
+listadas <- regmatches(mensagem_hcx, gregexpr('"[^"]*"', mensagem_hcx))[[1]]
+listadas <- gsub('"', '', listadas)
+cat("estimadores aceitos, lidos de formals():", length(assinatura), "\n")
+cat("estimadores citados na mensagem de erro:", length(listadas), "\n")
+cat("a mensagem cita exatamente os que a assinatura aceita?",
+    setequal(listadas, assinatura), "\n")
+cat("a mensagem repete a ordem da assinatura?",
+    identical(listadas, assinatura), "\n")
+cat("mensagem completa:\n")
+cat("  ", mensagem_hcx, "\n")
+```
+
+## A decisao do capitulo
+
+```{r}
+#| label: 03-decisao-calculos
+decisao_vif_max <- max(vif_tab$VIF)
+decisao_vif_termo <- vif_tab$term[which.max(vif_tab$VIF)]
+decisao_ci_max <- max(ci$condition_index)
+decisao_r_par <- cor(B$clay_pct, B$CEC_cmolc_dm3)
+decisao_se_max <- max(abs(razao_se - 1))
+decisao_clusters_certo <- unique(iv_bloco$clusters)
+decisao_clusters_degen <- unique(iv_continuo$clusters)
+decisao_obs_por_grupo <- nE / decisao_clusters_degen
+decisao_df_certo <- unique(iv_bloco$df)
+decisao_df_degen <- unique(iv_continuo$df)
+```
+
+```{r}
+#| label: fechar-03
+usar("mr_collinearity", x = "mr_fit")
+usar("mr_recommend", x = "mr_fit")
+usar("mr_inference", x = "mr_fit", vcov = "classical", cluster = "NULL", conf = 0.95)
+usar("mr_inference", x = "mr_fit", vcov = "HC3", cluster = "NULL", conf = 0.95)
+usar("mr_inference", x = "mr_fit", vcov = "cluster", cluster = "E$bloco", conf = 0.95)
+usar("mr_inference", x = "mr_fit", vcov = "cluster", cluster = "E$N_rate_kg_ha", conf = 0.95)
+usar("mr_inference", x = "mr_fit", vcov = "cluster", cluster = "'bloco' e ~bloco", conf = 0.95)
+usar("mr_fit", formula = "FORM_B e FORM_E", data = "dados_B() e dados_E()",
+     goal = "explanation", engine = "ols", tau = 0.5)
+salvar_uso("03")
+salvar_decisoes("03",
+  paste("Adotar HC3 como leitura de incerteza no cenario colinear, tratar o VIF",
+        "alto como descricao do desenho do dado e nunca como licenca para remover",
+        "variavel, e conferir a coluna `clusters` em toda inferencia agrupada."),
+  paste("O maior VIF do cenario B e ", fmt(decisao_vif_max, 2), " em",
+        decisao_vif_termo, ", com indice de condicao maximo",
+        fmt(decisao_ci_max, 2), " e correlacao argila-CEC de",
+        fmt(decisao_r_par, 4), "; mesmo assim mr_recommend() emite o dominio",
+        "'collinearity' com prioridade", recB$priority[recB$domain == "collinearity"],
+        "e a sua recomendacao e reter os termos exigidos pela ciencia, sem nenhuma",
+        "proposta de remocao. No ajuste de ", pB, " preditores, HC3 e classico",
+        "devolvem estimativas identicas por all.equal() e diferem no erro-padrao",
+        "em ate ", pct(decisao_se_max), ". No cenario E, o vetor continuo entra",
+        "sem erro e sem aviso e devolve clusters =", decisao_clusters_degen, ", com",
+        fmt(decisao_obs_por_grupo, 2), " observacao por agrupamento, contra clusters =",
+        decisao_clusters_certo, " e df =", decisao_df_certo, " do fator de bloco: o",
+        "df degenerado passa a", decisao_df_degen, "."))
+```

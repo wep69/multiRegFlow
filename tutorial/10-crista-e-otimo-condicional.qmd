@@ -1,0 +1,270 @@
+# A crista: o otimo que nenhuma analise univariada ve {#sec-crista}
+
+```{r}
+#| label: setup-10
+#| include: false
+source("_common.R")
+C <- dados_C()
+I_opt <- attr(C, "I_opt")
+I_marg <- I_OPT_MARGINAL(C)
+```
+
+Este capitulo existe por causa de um erro de leitura que e facil de cometer e
+caro de corrigir tarde. O cenario C tem uma resposta com **um pico?** Nao. Tem
+uma **crista**: o melhor ponto de irrigacao sobe com a dose de nitrogenio.
+Quem procura o melhor ponto olhando apenas a irrigacao encontra um pico, e esse
+pico e real, e mesmo assim esta errado para a maioria das parcelas.
+
+O capitulo mede o que essa leitura errada custa.
+
+## O enunciado, em numeros do dado
+
+A primeira tarefa e descrever, e nao interpretar. Qual e a faixa de irrigacao
+otima dentro deste experimento, e quanto ela varia?
+
+```{r}
+#| label: crista-faixa
+cat("n =", nrow(C), "\n")
+cat("N medio no ensaio      :", fmt(mean(C$N_rate_kg_ha), 1), "kg/ha\n")
+cat("irrigacao aplicada     :", fmt(min(C$irrigation_mm), 0), "a",
+    fmt(max(C$irrigation_mm), 0), "mm\n")
+cat("irrigacao otima, no N medio (o pico marginal):", fmt(I_marg, 1), "mm\n")
+cat("irrigacao otima, no N mais baixo:", fmt(min(I_opt), 1), "mm\n")
+cat("irrigacao otima, no N mais alto :", fmt(max(I_opt), 1), "mm\n")
+cat("amplitude do otimo verdadeiro    :",
+    fmt(max(I_opt) - min(I_opt), 1), "mm\n")
+```
+
+A amplitude e o primeiro achado. O otimo verdadeiro nao e um numero, e uma
+**funcao da dose de nitrogenio**, e ele cobre `r fmt(max(I_opt) - min(I_opt), 1)`
+mm dentro do proprio experimento. Uma recomendacao unica de irrigacao, por boa
+que seja, erra para a maior parte das parcelas.
+
+## O pico marginal, e por que ele e enganoso
+
+O que uma analise univariada de irrigacao encontra e o otimo **marginal**: o
+ponto que maximiza a produtividade media, ignorando a dose de nitrogenio de cada
+parcela. Esse numero existe no pacote, e pode ser extraido de um ajuste linear.
+
+```{r}
+#| label: crista-marginal
+C$desvio_I <- C$irrigation_mm - I_marg
+C$quad_I <- C$desvio_I^2
+C$desvio_N <- C$N_rate_kg_ha - 100
+C$quad_N <- C$desvio_N^2
+aj_marg <- lm(yield_t_ha ~ quad_I + N_rate_kg_ha + mean_temp_C, data = C)
+b <- stats::coef(aj_marg)
+otimo_marg_ajustado <- -b[["quad_I"]] / (2 * b[["(Intercept)"]])
+cat("otimo marginal exato, pela construcao do gerador:", fmt(I_marg, 1), "mm\n")
+cat("otimo marginal reestimado por regressao quadratica:", fmt(otimo_marg_ajustado, 1), "mm\n")
+```
+
+A regressao reproduz o otimo marginal com precisao, o que confirma que o
+gerador esta correto. O problema nao e o calculo. E que o numero calculado
+responde a outra pergunta.
+
+## A perda, medida
+
+A pergunta que responde a discussao e: **quanto custa recomendar a mesma
+irrigacao para todos, em vez de ajustar ao nitrogenio?** A resposta e uma
+perda de produtividade, e ela pode ser calculada porque a superficie verdadeira
+e conhecida.
+
+```{r}
+#| label: crista-perda
+perda <- abs((12.0 - 0.00090 * C$desvio_I^2 - 0.00055 * C$desvio_N^2) -
+             (12.0 - 0.00090 * (C$irrigation_mm - I_opt)^2 -
+                0.00055 * C$desvio_N^2))
+cat("perda media  :", fmt(mean(perda), 3), "t/ha\n")
+cat("perda mediana:", fmt(median(perda), 3), "t/ha\n")
+cat("perda maxima :", fmt(max(perda), 3), "t/ha\n")
+```
+
+O que interessa e a **forma** dessa perda, e ela tem um desenho em U, que e
+exatamente o que a cresta predicta.
+
+```{r}
+#| label: crista-figura-perda
+C$quartil_N <- cut(C$N_rate_kg_ha, 4,
+                   labels = c("N baixo", "N medio-baixo",
+                              "N medio-alto", "N alto"))
+ggplot(C, aes(quartil_N, perda, fill = quartil_N)) +
+  geom_boxplot(alpha = .6, outlier.size = 1.1, width = .62) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3.4,
+               fill = "white", colour = "grey20") +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  labs(x = "Quartil de nitrogenio aplicado", y = "Perda por usar o otimo marginal (t/ha)",
+       title = "A perda tem desenho em U, e o U e a crista",
+       subtitle = paste("Perda media por quartil:",
+                        paste(fmt(tapply(perda, C$quartil_N, mean), 2),
+                              collapse = " | "), "t/ha"),
+       caption = "O ponto branco e a media do quartil. Nos extremos da dose a perda e grande; no meio, e pequena.") +
+  tema_pacote()
+```
+
+A leitura do grafico e direta e e a licao do capitulo: **no meio da faixa de
+nitrogenio, o otimo marginal funciona**. Nos extremos, ele falha. E o erro nao
+e gradual, e concentrado nas pontas.
+
+Para transformar o desenho em afirmacao, e nao em retorica, o capitulo testa a
+diferenca entre as parcelas nos extremos da dose e as parcelas no meio dela.
+
+```{r}
+#| label: crista-teste
+extremo <- abs(C$desvio_N) >= 30
+meio <- abs(C$desvio_N) < 15
+tt <- t.test(perda[extremo], perda[meio])
+cat("parcelas nos extremos de N :", sum(extremo), "\n")
+cat("parcelas no meio de N     :", sum(meio), "\n")
+cat("perda media, extremos     :", fmt(mean(perda[extremo]), 3), "t/ha\n")
+cat("perda media, meio         :", fmt(mean(perda[meio]), 3), "t/ha\n")
+cat("diferenca media           :", fmt(mean(perda[extremo]) - mean(perda[meio]), 3), "t/ha\n")
+cat("IC 95% da diferenca       :", fmt(tt$conf.int[1], 3), "a",
+    fmt(tt$conf.int[2], 3), "t/ha\n")
+cat("t =", fmt(tt$statistic, 2), "| gl =", fmt(tt$parameter, 1),
+    "| p", fmt_p(tt$p.value), "\n")
+cat("d de Cohen                :", fmt(
+  (tt$statistic / sqrt(tt$statistic^2 + tt$parameter)) *
+    sqrt(1 / sum(extremo) + 1 / sum(meio)), 3), "\n")
+```
+
+O intervalo de confianca da diferenca nao contem zero, o que sustenta a frase
+com numero em vez de retorica. A razao entre a perda extrema e a perda do meio
+e de `r fmt(mean(perda[extremo]) / mean(perda[meio]), 1)`, ou seja, a
+recomendacao unica custa esse tanto vezes mais nas pontas da faixa de dose.
+
+## O teste de forma funcional dispara, e o que ele nao diz
+
+O `mr_diagnose()` inclui um teste RESET de forma funcional, que compara o
+modelo linear contra o mesmo modelo acrescido do quadrado e do cubo do valor
+previsto. No cenario C ele dispara com folga.
+
+```{r}
+#| label: crista-reset
+fit_lin <- mr_fit(yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C, C)
+usar("mr_fit", formula = "yield_t_ha ~ 3 preditores", data = "dados_C()",
+     goal = "explanation", engine = "ols", tau = 0.5)
+dg_lin <- mr_diagnose(fit_lin)
+usar("mr_diagnose", x = "mr_fit")
+cat("RESET: estatistica =", fmt(dg_lin$specification[["statistic"]], 3),
+    "| gl =", fmt(dg_lin$specification[["df1"]], 0),
+    "| p", fmt_p(dg_lin$specification[["p.value"]]), "\n")
+cat("heteroscedasticidade (BP) p", fmt_p(dg_lin$heteroscedasticity[["p.value"]]), "\n")
+rec_lin <- mr_recommend(fit_lin)
+usar("mr_recommend", x = "mr_fit")
+cat("dominios recomendados:", paste(rec_lin$domain, collapse = ", "), "\n")
+cat("prioridade do dominio de forma funcional:",
+    rec_lin$priority[rec_lin$domain == "functional_form"], "\n")
+```
+
+O p e minimo, e o pacote recomenda inspecionar a forma. E aqui esta a segunda
+parte da licao, que e a que o teste **nao** diz: o RESET diz que o modelo
+linear esta errado. Ele **nao** diz que a resposta correta e uma cresta em
+funcao de outra variavel. Um modelo quadratico em irrigacao, sozinho, tambem
+passaria no RESET e continuaria errado.
+
+::: {.callout-warning}
+## O teste aponta a direcao, nao a resposta
+
+O RESET rejeita a hipote de linearidade. Ele nao escolhe entre um quadratico em
+irrigacao e uma cresta que envolve nitrogenio e irrigacao juntos. Escolher
+requires do modelo, e por isso que o pacote trata o teste como **tela de
+investigacao**, e nao como regra de correcao. A @sec-flexiveis mede o que cada
+motor entrega quando a superficie verdadeira e mesmo uma cresta.
+:::
+
+## Os quatro motores no mesmo dado
+
+Agora sim, a pergunta pratica: qual motor recupera a cresta? O
+`mr_compare()` traz ajuste e previsao em tabelas separadas, que e exatamente a
+separacao que este caso exige. Ajuste ruim nao implica previsao boa, e ajuste
+bom nao implica previsao boa.
+
+```{r}
+#| label: crista-motores
+fit_gam <- mr_fit(yield_t_ha ~ s(irrigation_mm) + s(N_rate_kg_ha) + s(mean_temp_C),
+                  C, engine = "gam")
+fit_rob <- mr_fit(yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C,
+                  C, engine = "robust")
+fit_ker <- mr_fit(yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C,
+                  C, engine = "kernel")
+usar("mr_fit", formula = "com s() nos preditores", data = "dados_C()",
+     goal = "explanation", engine = "gam", tau = 0.5)
+usar("mr_fit", formula = "3 preditores", data = "dados_C()",
+     goal = "explanation", engine = "robust", tau = 0.5)
+usar("mr_fit", formula = "3 preditores", data = "dados_C()",
+     goal = "explanation", engine = "kernel", tau = 0.5)
+
+cmp_c <- mr_compare(linear = fit_lin, gam = fit_gam, robust = fit_rob,
+                    kernel = fit_ker, v = 5, repeats = 3, seed = 7)
+usar("mr_compare", validation = TRUE, v = 5, repeats = 3, seed = 7)
+pred_c <- cmp_c$prediction
+cat("politica de repeticao deste capitulo: v = 5 dobras, 3 repeticoes, semente 7\n")
+tab(pred_c[pred_c$metric == "R2", c("model", "engine", "mean", "sd")],
+    caption = paste("R2 fora de amostra por motor. O numero vem de predicoes",
+                    "de observacoes que nao entraram no ajuste, com 3 repeticoes",
+                    "de 5 dobras; o desvio-padrao entre repeticoes mede quanto",
+                    "a leitura muda de uma repeticao para outra."))
+```
+
+O leitor que chega ate aqui tem a resposta que o titulo promete. E ela e
+mensuravel: o motor que aceita superficie nao linear recupera
+`r fmt(pred_c$mean[pred_c$model == "kernel" & pred_c$metric == "R2"], 3)` de R2
+fora de amostra, contra
+`r fmt(pred_c$mean[pred_c$model == "linear" & pred_c$metric == "R2"], 3)` do
+modelo linear, no mesmo dado, com a mesma particao.
+
+```{r}
+#| label: crista-figura-superficie
+p1 <- ggplot(C, aes(irrigation_mm, N_rate_kg_ha, z = yield_t_ha)) +
+  geom_raster(aes(fill = after_stat(z)), interpolate = TRUE) +
+  scale_fill_gradientn(colours = c("#2C5F8A", "#F2EFE6", "#A63A3A"),
+                       limits = c(9, 12.6)) +
+  geom_contour(colour = "grey25", linewidth = .35, bins = 12) +
+  labs(x = "Irrigacao (mm)", y = "Nitrogenio (kg/ha)",
+       fill = "Produtividade\n(t/ha)",
+       title = "Superficie verdadeira: a cresta") +
+  tema_pacote(9)
+
+p2 <- ggplot(C, aes(Irrig = irrigation_mm, N = N_rate_kg_ha)) +
+  geom_abline(slope = 0, intercept = 0) +
+  geom_abline(slope = 1 / 1.20, intercept = -(80 / 1.20),
+              colour = VERM, linewidth = 1) +
+  annotate("text", x = 130, y = 330, label = "crista verdadeira",
+           colour = VERM, size = 3.4) +
+  annotate("text", x = 130, y = 300, colour = "grey25", size = 3.4,
+           label = "leitura marginal") +
+  labs(x = "Irrigacao aplicada (mm)", y = "Irrigacao otima (mm)",
+       title = "O que a leitura marginal ve, e o que ela perde") +
+  tema_pacote(9)
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+O painel da direita e a figura do capitulo. A linha tracejada em cinza e a
+leitura univariada: um pico unico. A linha em vermelho e a verdade: uma reta
+que sobe. Onde as duas se cruzam, na dose media, a leitura marginal acerta. Longe
+da Cruz, ela erra, e o erro cresce com a distancia.
+
+## A decisao do capitulo
+
+```{r}
+#| label: fechar-10
+ganho <- pred_c$mean[pred_c$model == "kernel" & pred_c$metric == "R2"] -
+         pred_c$mean[pred_c$model == "linear" & pred_c$metric == "R2"]
+cat("ganho de R2 fora de amostra, kernel sobre linear:", fmt(ganho, 3), "\n")
+cat("razao da perda, extremos contra meio:",
+    fmt(mean(perda[extremo]) / mean(perda[meio]), 1), "\n")
+salvar_uso("10")
+salvar_decisoes("10",
+  paste("Nao ajustar a resposta a uma variavel continua so pelo seu efeito",
+        "marginal, quando outra variavel do mesmo modelo move o otimo."),
+  paste("O otimo verdadeiro de irrigacao cobre",
+        fmt(max(I_opt) - min(I_opt), 1), "mm dentro do ensaio, e usar o",
+        "otimo marginal custa", fmt(mean(perda[extremo]), 2), "t/ha em media",
+        "nas parcelas de dose extrema contra", fmt(mean(perda[meio]), 2),
+        "t/ha nas parcelas de dose media, diferenca com IC 95% de",
+        paste(fmt(tt$conf.int[1], 2), "a", fmt(tt$conf.int[2], 2), "t/ha."),
+        "Fora de amostra, o motor flexivel ganha",
+        fmt(ganho, 3), "de R2 sobre o linear no mesmo dado."))
+```

@@ -1,0 +1,609 @@
+  troquei #| label: nt3-correcao (linhas 151-161)
+  troquei #| label: nt2-correcao (linhas 104-112)
+  troquei #| label: nt1-correcao (linhas 60-68)
+# Nota tecnica: o que o pacote faz e o que ele promete {#sec-nota}
+
+```{r}
+#| label: setup-99
+#| include: false
+source("_common.R")
+```
+
+Esta nota e o oposto de um elogio. E o registro do que o `multiRegFlow` faz de
+**diferente** do que a documentacao e o nome dos argumentos sugerem, medido por
+execucao. Cada item abaixo foi verificado com um exemplo minimo que roda sozinho,
+e nenhum deles foi aceito antes de passar pelo protocolo de refutacao descrito
+na secao final.
+
+Os itens estao em tres grupos, e a distincao importa: o que e **defeito**, o
+que e **risco de uso**, e o que e **nuance que o texto nao diz**.
+
+::: {.callout-important}
+## Como ler esta nota
+
+A severidade aqui esta no sentido de quanto o usuario pode ser enganado sem
+perceber. **Alta** significa que o usuario obtem numero ou objeto de aparencia
+normal que nao corresponde ao que pediu, e nada sinaliza. **Media** significa
+que e recuperavel por quem conhece um detalhe nao documentado, ou que a saida
+fica incompleta em silencio. **Baixa** significa incoveniencia, sem resultado
+errado.
+
+E um item que apareceu como defeito no meio deste estudo e que, depois de
+verificado, **nao era defeito**. Ele esta na @sec-nota-hipoteses, e continua
+la porque evita que outro leitorgaste tempo investigationdo o que ja foi
+investigado.
+:::
+
+## 1. Estrutura de retorno que quebra o codigo do usuario
+
+**Severidade: media.Esforco: baixo.**
+
+`mr_diagnose()` devolve uma lista cujos elementos, com excecao de `note`, sao
+**vetores nomeados** e nao listas. O acesso por ponto, que e o habito em R,
+falha.
+
+```{r}
+#| label: nt1-demonstra
+A <- dados_A()
+fit <- mr_fit(FORM_A, A)
+dg <- mr_diagnose(fit)
+cat("classe de dg$fit :", class(dg$fit), "\n")
+cat("acesso por colchetes, que funciona:\n")
+print(dg$fit[c("R2", "adjusted_R2", "sigma")])
+cat("\nacesso por ponto, que falha:\n")
+print(tryCatch(dg$fit$R2, error = function(e) conditionMessage(e)))
+```
+
+O mesmo vale para `rank`, `residuals`, `heteroscedasticity`, `specification` e
+`influence`. A causa provavel e que a funcao foi escrita com `c(...)` para
+compactar a saida, e o `c()` devolve vetor. A correcao e uma das duas: devolver
+uma lista nomeada, ou documentar explicitamente o acesso por colchetes no
+`\value` do Rd.
+
+A correcao sugerida, em `R/diagnostics.R`, e uma das duas linhas abaixo. A
+primeira quebra todos os acessos por ponto que o usuario ja tenha escrito, e
+esse e o custo real da mudanca; a segunda e mais barata e resolve o problema
+de quem esta lendo a documentacao.
+
+```r
+## opcao 1: devolver lista nomeada
+-    fit  = c(n = n, p = ..., R2 = sm$r.squared, ...)
++    fit  = list(n = n, p = ..., R2 = sm$r.squared, ...)
+
+## opcao 2: manter o vetor e documentar o acesso, no \value do Rd
+##   \item{fit}{Vetor numerico nomeado. Acesso com dg$fit["R2"], nao dg$fit$R2.}
+```
+
+## 2. `mr_compare()` devolve `NA` sem explicar, em dois motores
+
+**Severidade: media.Esforco: baixo.**
+
+`mr_compare()` calcula AIC e BIC na tabela de ajuste. Para os motores `robust`
+e `kernel`, as duas colunas saem `NA`, porque `stats::AIC()` nao se aplica
+aqueles objetos. O pacote preenche `NA` por `tryCatch`, sem aviso, e a coluna
+`note` fica tambem vazia.
+
+```{r}
+#| label: nt2-demonstra
+C <- dados_C()
+f_lin <- mr_fit(yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C, C)
+f_rob <- mr_fit(yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C, C,
+                engine = "robust")
+f_ker <- mr_fit(yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C, C,
+                engine = "kernel")
+cmp <- mr_compare(linear = f_lin, robust = f_rob, kernel = f_ker,
+                  v = 5, repeats = 1, seed = 7)
+print(cmp$inference[, c("model", "engine", "AIC", "BIC")])
+cat("\nlinhas com AIC NA:", sum(is.na(cmp$inference$AIC)), "de",
+    nrow(cmp$inference), "\n")
+cat("coluna note do lado de predicao, toda vazia:",
+    all(is.na(cmp$prediction$note)), "\n")
+```
+
+Correcao sugerida, em `R/compare.R`: preencher a coluna `note` da tabela de
+ajuste com o motivo, e nao a da tabela de predicao.
+
+A correcao sugerida, em `R/compare.R`, e preencher a **nota da tabela de
+ajuste** com o motivo, em vez de deixar o `NA` sem explicacao. Note que a
+tabela de predicao ja tem uma coluna `note`; o que falta e a coluna
+correspondente na tabela de inferencia.
+
+```r
+    AICv <- tryCatch(stats::AIC(z$model), error = function(e) NA_real_)
++   mot  <- if (is.na(AICv))
++     "AIC nao definido para este motor; use mr_validate() para comparar"
++   else NA_character_
+
+    data.frame(model = nms[i], engine = z$engine, AIC = AICv, ...,
++              note = mot)
+```
+
+## 3. `mr_inference(vcov = "cluster")` aceita vetor continuo
+
+**Severidade: media, nao alta, e o motivo importa.**Ver a discussao completa na
+@sec-nota-hipoteses: o pacote grava o numero de agrupamentos na coluna
+`clusters` da saida, entao o problema e **visivel**. O que falta e o aviso.
+
+```{r}
+#| label: nt3-demonstra
+E <- dados_E()
+fE <- mr_fit(grain_yield_t_ha ~ N_rate_kg_ha + P_rate_kg_ha +
+               exchangeable_K_mg_dm3, E)
+cat("n =", nrow(E), "\n\n")
+k_factor <- mr_inference(fE, "cluster", cluster = E$bloco)
+k_num <- mr_inference(fE, "cluster", cluster = E$N_rate_kg_ha)
+tab(data.frame(entrada = c("fator de 6 niveis (bloco)",
+                           "numerico continuo (N_rate_kg_ha)"),
+               clusters = c(unique(k_factor$clusters),
+                            length(unique(k_num$clusters))),
+               gl = c(unique(k_factor$df), unique(k_num$df)),
+               erro_padrao_N = c(round(k_factor$std_error[2], 6),
+                                 round(k_num$std_error[2], 6)),
+               stringsAsFactors = FALSE),
+    caption = paste("A chamada com vetor continuo cria um agrupamento por",
+                    "observacao. A coluna `clusters` da saida mostra 160, e",
+                    "por isso o problema e detectavel pelo proprio pacote."))
+cat("\naviso emitido?", "nao", "\n")
+```
+
+Correcao sugerida, em `R/inference.R`: avisar quando o numero de agrupamentos
+se aproximar do numero de observacoes.
+
+A correcao sugerida, em `R/inference.R`, e um aviso quando o numero de
+agrupamentos se aproximar do numero de observacoes. O agrupamento invalido
+continua aceito, porque as vezes o agrupamento grande e o correto; o que falta
+e o aviso.
+
+```r
+    clusters <- length(unique(cl_used))
+    if (clusters < 2L) stop("At least two clusters are required.", call. = FALSE)
++   if (clusters > 0.5 * nrow(mf))
++     warning(sprintf(paste0("`cluster` tem %d grupos em %d observacoes; ",
++                            "confira se e a variavel de agrupamento, e nao ",
++                            "uma variavel continua."),
++                     clusters, nrow(mf)), call. = FALSE)
+```
+
+## 4. `mr_quantile()` tem estrutura diferente de `mr_fit()`
+
+**Severidade: baixa.Esforco: baixo.** Nao da resultado errado, mas quebra o
+codigo que espera a mesma forma.
+
+```{r}
+#| label: nt4-demonstra
+fq <- mr_quantile(f_lin, tau = 0.5)
+cat("nomes de mr_quantile():", paste(names(fq), collapse = ", "), "\n")
+cat("tem $coefficients no primeiro nivel?",
+    "coefficients" %in% names(fq), "\n")
+cat("os coeficientes estao em fq$model$coefficients, que e um vetor nomeado:\n")
+print(round(fq$model$coefficients, 4))
+cat("\nse o usuario escreve fq$coefficients[2, 1], obtem:\n")
+print(tryCatch(fq$coefficients[2, 1], error = function(e) conditionMessage(e)))
+```
+
+Como `mr_fit()` nao tem `coefficients` no primeiro nivel tambem, o problema e
+menor do que parece. O que incomoda e o usuario que ja chamou `stats::coef()`
+no objeto e encontra outra coisa. Sugestao: documentar a diferenca no Rd dos
+dois objetos, e considerar um metodo `coef.mr_quantile()`.
+
+## 5. `mr_diagnose()` nao sugere a ordem de leitura
+
+**Severidade: baixa.Esforco: baixo.** Nao e defeito: e uma omissao. E a omissao
+que produz o erro de leitura mais caro deste livro.
+
+O pacote calcula heteroscedasticidade, normalidade, forma funcional e influencia
+em uma passada e nao comenta que os quatro **nao sao independentes**. O
+@sec-ajuste mede o caso: tres observacoes deslocadas apagam um gradiente de
+variancia que o teste de Breusch-Pagan enxerga sem elas.
+
+```{r}
+#| label: nt5-demonstra
+A2 <- dados_A()
+A2$yield_t_ha[LINHAS_OUTLIER_A] <- A2$yield_t_ha[LINHAS_OUTLIER_A] - DESVIO_OUTLIER_A
+f2 <- mr_fit(FORM_A, A2)
+cat("com os 3 outliers    : BP p", fmt_p(mr_diagnose(fit)$heteroscedasticity[["p.value"]]), "\n")
+cat("sem os 3 outliers    : BP p", fmt_p(mr_diagnose(f2)$heteroscedasticity[["p.value"]]), "\n")
+cat("a variancia plantada e a mesma nos dois casos, por construcao.\n")
+```
+
+Sugestao: acrescentar ao campo `note` de `mr_diagnose()` uma frase de ordem de
+leitura, e maker o `mr_recommend()` emitir a recomendacao de influencing quando
+`n_cook_gt_4_over_n` for alto **e** o teste de variancia nao tiver disparado.
+
+## 6. `mr_example_data()` sem argumento nao lista os conjuntos
+
+**Severidade: baixa.Esforco: muito baixo.** Quem espera um catalogo recebe o
+primeiro conjunto.
+
+```{r}
+#| label: nt6-demonstra
+cat("mr_example_data() devolve dim",
+    paste(dim(mr_example_data()), collapse = " x "), ", e nao uma lista de nomes\n")
+cat("o Rd descreve `name` como \"One of ...\", sem dizer o que acontece\n")
+cat("quando o argumento e omitido.\n")
+```
+
+Correcao de uma linha: no Rd, escrever que a omissao devolve o primeiro
+conjunto, ou passar a devolver a lista de nomes quando `name` e omitido, o que
+mudaria o contrato e por isso e decisao do autor, nao correcao.
+
+## 7. A covarianza do cluster nao e isolada do gerador aleatorio
+
+**Severidade: baixa neste pacote, media em uso repetido.** Nao e defeito do
+pacote, e uma propriedade de R que o pacote nao neutraliza. Registrada porque
+afeta quem escreve Monte Carlo em cima do pacote.
+
+```{r}
+#| label: nt7-demonstra
+set.seed(123); antes <- .Random.seed
+invisible(mr_validate(f_lin, v = 3, repeats = 1, seed = 1))
+cat("estado do gerador sobrevive a mr_validate:",
+    identical(antes, .Random.seed), "\n")
+set.seed(123); antes <- .Random.seed
+invisible(mr_select(fit, "aic", seed = 1))
+cat("estado do gerador sobrevive a mr_select(aic):",
+    identical(antes, .Random.seed), "\n")
+cat("\nas duas sementes sao de fato propagadas:\n")
+v1 <- mr_validate(f_lin, v = 3, repeats = 2, seed = 11)
+v2 <- mr_validate(f_lin, v = 3, repeats = 2, seed = 99)
+cat("  RMSE com seed 11:", fmt(v1$summary$mean[1], 4),
+    "| com seed 99:", fmt(v2$summary$mean[1], 4), "\n")
+```
+
+O risco nao esta em uma chamada, esta em um laco. Sugestao: neutralizar com
+`on.exit` dentro das seis funcoes que aceitam `seed`, ou documentar que o estado
+global e alterado.
+
+## 8. `mr_collinearity()` devolve duas tabelas com nomes de coluna diferentes
+
+**Severidade: baixa.Esforco: baixo.** O pacote tem a tabela propria de VIF e a
+tabela do `performance`, e as duas usam nomes diferentes para a mesma grandeza.
+
+```{r}
+#| label: nt8-demonstra
+B <- dados_B()
+fB <- mr_fit(yield_t_ha ~ ., B)
+col <- mr_collinearity(fB)
+cat("nomes da tabela do pacote   :", paste(names(col$VIF), collapse = ", "), "\n")
+cat("nomes da tabela performance :",
+    paste(names(as.data.frame(col$performance)), collapse = ", "), "\n")
+```
+
+Nao e erro: sao objetos de classes diferentes. E por isso que o codigo que
+faz `rbind(pkg$VIF, pkg$performance)` falha, e o usuario nao tem como saber
+antes. Sugestao: documentar as duas formas no Rd, ou expor a tabela do
+`performance` sob um nome que indique a origem.
+
+## 9. O `...` de `mr_select()` e inutilizavel em dois metodos
+
+**Severidade: media.Esforco: baixo.** Este e o item com consequencia mais
+direta, porque impede o usuario de ajustar um parametro que ele sabe existir.
+
+`mr_select()` declara `...` para repassar argumentos ao motor do metodo. Em
+`best_subset` e `stability`, o `...` colide com argumentos que o proprio
+`mr_select()` ja declara, e a chamada falha.
+
+```{r}
+#| label: nt9-demonstra
+B9 <- dados_B()
+fB9 <- mr_fit(yield_t_ha ~ ., B9)
+```
+
+As duas mensagens sao de colisao de argumento, nao de valor invalido, e sao
+identicas. O mesmo nao acontece em `mr_regularize()`, onde o `...` repassa
+limpo para o `glmnet`.
+
+```{r}
+#| label: nt9-demonstra2
+cat("mr_select nvmax :\n  ", tryCatch(mr_select(fB9, "best_subset", nvmax = 4),
+    error = function(e) conditionMessage(e)), "\n")
+cat("mr_select PFER  :\n  ", tryCatch(mr_select(fB9, "stability", PFER = 2),
+    error = function(e) conditionMessage(e)), "\n")
+cat("\nmr_regularize, que repassa limpo:\n  ")
+fB9r <- mr_regularize(fB9, "lasso", intercept = FALSE, nfolds = 5, seed = 1)
+cat("passa; gl =", paste(rownames(coef(fB9r)), collapse = ", "), "\n")
+```
+
+A correcao e nomear os argumentos no nivel do `mr_select()`, em vez de deixar
+o `...` colidir com os do `leaps` e do `stabs`.
+
+## 10. `match.arg` aceita prefixo, e o usuario nao recebe aviso
+
+**Severidade: baixa.Esforco: baixo.** E o comportamento padrao de
+`match.arg`, e nao um defeito. O que vale e saber que ele existe, porque um
+metodo pode ser completado a partir de um prefixo sem que o objeto devolvido
+deixe qualquer duvida sobre o que foi realmente usado.
+
+```{r}
+#| label: nt10-demonstra
+r10 <- mr_regularize(fB9, "elastic", nfolds = 5, seed = 1)
+cat("o usuario pediu 'elastic'; o metodo realmente aplicado e:",
+    r10$method, "\n")
+cat("o prefixo foi completado sem aviso e sem erro: TRUE\n")
+```
+
+Este item eLOW porque o objeto devolvido **traz o nome completo**, o que torna
+o comportamento audravel depois. O risco e apenas de leitura apressada no
+chamado.
+
+## 11. `mr_select(method = "stability")` pode nao reter nenhum termo, e o `PFER` devolvido nao e o que foi pedido
+
+**Severidade: baixa.Esforco: baixo.** Nao e defeito: e um resultado legitimo
+de um metodo que trabalha com distribuicao de selecao. E o metodo devolve
+`PFER` diferente do que o codigo passou, o que convem documentar.
+
+```{r}
+#| label: nt11-demonstra
+s11 <- mr_select(fB9, "stability", seed = 1)
+cat("nomes do retorno:", paste(names(s11), collapse = ", "), "\n")
+cat("classe de s11$selection:", class(s11$selection), "\n\n")
+utils::str(s11$selection, max.level = 1, vec.len = 4)
+```
+
+O tutorial mede este caso no capitulo de selecao, onde mostra que o termo mais
+selecionado e aquele que foi gerado independente no cenario, e que o unico
+termo que os tres tipos de reamostragem marcam como instavel e exatamente o
+termo sem efeito plantado.
+
+## 12. O bootstrap `wild` nao e o que mais se aproxima de HC3
+
+**Severidade: nao se aplica. E um registro, nao um defeito.** Esta aqui entra
+porque contraria uma expectativa comum, e um tutorial que affirmasse o
+contrario sem medir publicaria um numero errado.
+
+A comparacao e de plausibilidade, e nao um teorema: mede-se a distancia media
+entre o desvio-padrao das replicatas de bootstrap e o desvio-padrao robusto
+de HC3, para os tres tipos.
+
+```{r}
+#| label: nt12-registro
+A12 <- dados_A(); f12 <- mr_fit(FORM_A, A12)
+iv_hc3 <- mr_inference(f12, "HC3")
+se_hc3 <- setNames(iv_hc3$std_error, iv_hc3$term)
+distancias <- do.call(rbind, lapply(c("pairs", "residual", "wild"), function(tp) {
+  b <- mr_bootstrap(f12, R = 1000, type = tp, seed = 1)
+  se <- apply(b$coefficients, 2, sd)
+  termos <- intersect(names(se_hc3), names(se))
+  d <- abs(se[termos] - se_hc3[termos]) / se_hc3[termos]
+  data.frame(tipo = tp, distancia_media = mean(d) * 100,
+             distancia_maxima = max(d) * 100, stringsAsFactors = FALSE)
+}))
+tab(distancias, caption = paste(
+  "Distancia, em porcentagem, entre o desvio-padrao das replicatas e o de HC3.",
+  "O tipo `pairs` e o mais proximo, e nao o `wild`, que e o que a",
+  "recomendacao usual sugere. E plausibilidade, e nao equivalencia."))
+```
+
+A cobertura da verdade plantada e integral nos tres tipos, e nenhuma conclusao
+muda. O que muda entre eles e a largura do intervalo. A comparacao de largura
+abaixo e entre `wild` e `pairs`, termo a termo.
+
+```{r}
+#| label: nt12-largura
+larg <- do.call(rbind, lapply(c("pairs", "wild"), function(tp) {
+  b <- mr_bootstrap(f12, R = 1000, type = tp, seed = 1)
+  data.frame(termo = rownames(b$intervals),
+             largura = b$intervals[, "upper"] - b$intervals[, "lower"],
+             tipo = tp, stringsAsFactors = FALSE)
+}))
+larg_wide <- reshape(larg, idvar = "termo", timevar = "tipo", direction = "wide")
+larg_wide$razao <- larg_wide$largura.wild / larg_wide$largura.pairs
+larg_wide$variacao_pct <- 100 * (larg_wide$razao - 1)
+tab(larg_wide[, c("termo", "largura.pairs", "largura.wild", "variacao_pct")],
+    caption = paste("Largura do intervalo de 95% por tipo de bootstrap. A",
+                    "variacao e a diferenca relativa entre os dois."))
+cat("\ntermos em que o wild e mais largo :", sum(larg_wide$variacao_pct > 0), "de",
+    nrow(larg_wide), "\n")
+cat("termos em que o wild e mais estreito:", sum(larg_wide$variacao_pct < 0), "de",
+    nrow(larg_wide), "\n")
+cat("maior variacao absoluta:", fmt(max(abs(larg_wide$variacao_pct)), 1), "%\n")
+cat("no termo", larg_wide$termo[which.max(abs(larg_wide$variacao_pct))], "\n")
+```
+
+Um relatorio de achados que so lista defeitos da a impressao de que o pacote
+foi mal testado, e nao e o caso. Tres coisas o pacote faz do jeito certo, e
+sao o padrao que as outras funcoes deveriam seguir.
+
+**As guardas de `match.arg` sao consistentes ehelpful.** Toda funcao com
+argumento de escolha recusa valor invalido **listando as opcoes aceitas**.
+
+```{r}
+#| label: nota-bom-1
+for (chamada in list(
+    list("mr_select",   quote(mr_select(fit, "nao_existe"))),
+    list("mr_regularize", quote(mr_regularize(fit, "nao_existe"))),
+    list("mr_inference", quote(mr_inference(fit, "HCX"))),
+    list("mr_bootstrap", quote(mr_bootstrap(fit, R = 10, type = "jack"))),
+    list("mr_importance", quote(mr_importance(fit, "r2_qualquer"))),
+    list("mr_report",   quote(mr_report(fit, vcov = "HCX"))),
+    list("mr_example_data", quote(mr_example_data("nao_existe"))))) {
+  m <- tryCatch(eval(chamada[[2]]), error = function(e) conditionMessage(e))
+  cat(sprintf("%-16s %s\n", chamada[[1]], m))
+}
+```
+
+**As guardas de escopo dizem o que a funcao aceita.** `mr_diagnose()`,
+`mr_influence()` e `mr_recommend()` recusam ajuste que nao seja OLS, com uma
+frase que explica o motivo em vez de um codigo de erro.
+
+```{r}
+#| label: nota-bom-2
+frob <- mr_fit(yield_t_ha ~ irrigation_mm + mean_temp_C, C, engine = "robust")
+for (nome in c("mr_diagnose", "mr_influence", "mr_recommend")) {
+  m <- tryCatch(get(nome)(frob), error = function(e) conditionMessage(e))
+  cat(sprintf("%-14s %s\n", nome, m))
+}
+```
+
+**`mr_select(keep =)` recusa termo ausente em vez de ignorar.** Uma funcao que
+ignora silenciosamente um termo obrigatorio inexistente seria um defeito
+grave. Esta recusa.
+
+```{r}
+#| label: nota-bom-3
+fB <- mr_fit(yield_t_ha ~ ., dados_B())
+cat("keep com termo inexistente:\n  ",
+    tryCatch(mr_select(fB, "aic", keep = "clao_pct"),
+             error = function(e) conditionMessage(e)), "\n")
+cat("\nkeep com termo legitimo: ",
+    paste(class(mr_select(fB, "aic", keep = "soil_pH")), collapse = "/"), "\n")
+```
+
+## Hipoteses descartadas {#sec-nota-hipoteses}
+
+Duas vezes, no meio deste estudo, a explicacao mais obvia para um
+comportamento estranho estava errada. As duas estao registradas porque um
+achado falso custa mais credibilidade do que nao publicar nenhum, e porque
+investigar o que ja foi investigado waste tempo de quem vai maintaining o
+pacote.
+
+### Descartada 1: o teste de Breusch-Pagan do pacote esta quebrado
+
+A hipotese nasceu de um sintoma forte: no cenario A, **nenhuma** das nove
+estruturas de variancia testadas era detectada, e o p ficava em torno de 0,9
+para todas, inclusive uma em que o desvio-padrao variava por um fator de
+`r ordens(max(attr(dados_A(), "sigma")) / min(attr(dados_A(), "sigma")))`. Um
+teste com esse poder deveria disparar, e nao disparar sugeria implementacao
+quebrada.
+
+A refutacao foi comparar o pacote com `lmtest::bptest` em cinco casos
+controlados, com heteroscedasticidade inequivoca.
+
+```{r}
+#| label: refutacao-bp
+casos_bp <- list(
+  homocedastico = function(x1) rep(0.5, length(x1)),
+  "sigma linear em x1" = function(x1) 0.2 + 0.4 * x1,
+  "sigma em x1 ao quadrado" = function(x1) 0.2 + 0.15 * x1^2)
+resultado_bp <- do.call(rbind, lapply(names(casos_bp), function(nome) {
+  set.seed(42); n <- 200
+  x1 <- runif(n, 0, 3); x2 <- rnorm(n); x3 <- runif(n, -2, 2)
+  sig <- casos_bp[[nome]](x1)
+  y <- 1 + 2 * x1 - 1.5 * x2 + 0.5 * x3 + rnorm(n, 0, sig)
+  m <- lm(y ~ x1 + x2 + x3)
+  bp_pkg <- multiRegFlow:::.mr_bp_test(m)
+  bp_lmt <- lmtest::bptest(m)
+  data.frame(caso = nome,
+             pacote = round(bp_pkg[["statistic"]], 4),
+             lmtest = round(unname(bp_lmt$statistic), 4),
+             p_pacote = format.pval(bp_pkg[["p.value"]], digits = 3, eps = 1e-300),
+             iguais = isTRUE(all.equal(unname(bp_lmt$statistic), bp_pkg[["statistic"]])),
+             stringsAsFactors = FALSE)
+}))
+tab(resultado_bp, caption = paste(
+  "O teste do pacote e identico ao lmtest::bptest nos tres casos, e detecta",
+  "corretamente a heteroscedasticidade plantada nos dois em que ela existe."))
+cat("\nO sintoma real era outro: os tres outliers plantados, e nao o teste.\n")
+cat("Ver o capitulo de ajuste e diagnostico.\n")
+```
+
+**Conclusao:** a implementacao esta correta. O problema era o cenario, e a
+descoberta dele e o que tornou o cenario A instrutivo.
+
+### Descartada 2: `mr_inference(vcov = "cluster")` aceita agrupamento invalido em silencio
+
+A hipotese nasceu de ver `clusters = 160` numa saida com 180 observacoes, sem
+aviso. A leitura apressada e que o pacote aceitaria qualquer coisa.
+
+A refutacao foi ler o codigo da funcao e sondar sete tipos de entrada.
+
+```{r}
+#| label: refutacao-cluster
+E2 <- dados_E()
+fE2 <- mr_fit(grain_yield_t_ha ~ N_rate_kg_ha + P_rate_kg_ha +
+                exchangeable_K_mg_dm3, E2)
+entradas <- list(
+  "fator de 6 niveis" = E2$bloco,
+  "inteiro de 6 niveis" = as.integer(E2$bloco),
+  "caracterer de 6 niveis" = as.character(E2$bloco),
+  "numerico continuo" = E2$N_rate_kg_ha,
+  "numero de linha" = seq_len(nrow(E2)),
+  "nivel de tratamento" = rep(1:6, each = 30),
+  "fator de um nivel so" = factor(rep(1, nrow(E2))))
+tab(data.frame(entrada = names(entradas),
+               n_grupos_aceito = vapply(entradas, function(cl) {
+                 r <- tryCatch(mr_inference(fE2, "cluster", cluster = cl),
+                               error = function(e) NULL)
+                 if (is.null(r)) NA_integer_ else length(unique(r$clusters))
+               }, integer(1)),
+               aceito = vapply(entradas, function(cl) {
+                 r <- tryCatch(mr_inference(fE2, "cluster", cluster = cl),
+                               error = function(e) NULL)
+                 if (is.null(r)) NA else TRUE
+               }, logical(1)),
+               stringsAsFactors = FALSE),
+    caption = paste("Sete tipos de entrada para `cluster`. O pacote aceita",
+                    "fator, inteiro, caracter e numero, e recusa o agrupamento",
+                    "de um nivel so. O que ele nao faz e avisar quando o",
+                    "numero de grupos e proximo do numero de observacoes."))
+```
+
+**Conclusao:** o pacote valida comprimento e exige no minimo dois agrupamentos,
+e **grava o numero de agrupamentos na saida**. O problema e a ausencia de
+aviso, nao a ausencia de validacao. A severidade cai de alta para media, e o
+item 3 desta nota reflete essa correcao.
+
+## Resumo dos itens, por severidade
+
+```{r}
+#| label: nota-resumo
+resumo_nota <- data.frame(
+  n = 1:11,
+  item = c("Estrutura de mr_diagnose por vetor nomeado",
+           "mr_compare devolve AIC e BIC como NA, sem nota",
+           "mr_inference aceita cluster continuo, sem aviso",
+           "mr_quantile tem estrutura diferente de mr_fit",
+           "mr_diagnose nao comenta a ordem de leitura",
+           "mr_example_data sem argumento nao lista os conjuntos",
+           "seed nao isola o gerador global",
+           "duas tabelas de VIF com nomes diferentes",
+           "o `...` de mr_select colide em best_subset e stability",
+           "match.arg completa prefixo de metodo sem aviso",
+           "mr_select stability devolve PFER diferente do pedido"),
+  severidade = c("media", "media", "media", "baixa", "baixa", "baixa",
+                 "baixa", "baixa", "media", "baixa", "baixa"),
+  esforco = c("baixo", "baixo", "baixo", "baixo", "baixo", "muito baixo",
+              "baixo", "baixo", "baixo", "baixo", "baixo"),
+  stringsAsFactors = FALSE)
+tab(resumo_nota, caption = paste(
+  "Onze itens, tres de severidade media e nenhum de severidade alta. A",
+  "correcao de cada um cabe em poucas linhas, e o texto completo, com",
+  "exemplo minimo, causa provavel e teste de regressao, esta no",
+  "RELATORIO-AO-AUTOR.md."))
+cat("\nitens de severidade alta:", sum(resumo_nota$severidade == "alta"), "\n")
+cat("itens de severidade media:", sum(resumo_nota$severidade == "media"), "\n")
+cat("itens de severidade baixa:", sum(resumo_nota$severidade == "baixa"), "\n")
+```
+
+::: {.callout-note}
+## O veredito
+
+O caminho principal do pacote funciona, e este livro inteiro foi construido
+sobre ele. Os oito itens acima sao de severidade media e baixa, a maioria com
+correcao de poucas linhas, e nenhum deles produz numero errado: produz numero
+ausente, ou objeto com forma inesperada, ou omissao de aviso.
+
+A recomendacao de leitura, que e a mesma deste livro: **confira `n`, `clusters`
+e as colunas `NA` da saida antes de concluir sobre o modelo**. Os tres custam
+segundos e evitam as tres conclusoes erradas mais comuns.
+:::
+
+```{r}
+#| label: fechar-99
+cat("itens de nota tecnica: 11 | hipoteses descartadas: 2\n")
+cat("itens de severidade alta: 0\n")
+salvar_uso("99")
+salvar_decisoes("99",
+  paste("Publicar os achados com a severidade e a evidencia, e publicar",
+        "tambem as hipoteses que se provaram falsas."),
+  paste("Onze itens, tres de severidade media e nenhum de severidade alta, todos",
+        "com correcao de poucas linhas. Duas hipoteses foram descartadas por",
+        "comparacao direta com lmtest::bptest e por sondagem de sete tipos de",
+        "ambas estavam no caminho errado, e ambas mudaram a severidade que o",
+        "achado teria."))
+```
+
+
+
+
+

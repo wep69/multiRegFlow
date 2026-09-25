@@ -1,0 +1,318 @@
+# Ajuste e diagnostico {#sec-ajuste}
+
+```{r}
+#| label: setup-02
+#| include: false
+source("_common.R")
+A <- dados_A()
+```
+
+Este capitulo percorre o caminho de ajuste e diagnostico do pacote, e no meio
+dele mede a descoberta mais importante deste estudo: **tres observacoes
+deslocadas apagam um gradiente de variancia que o pacote consegue ver sem
+elas**. A descoberta e a razao de o cenario A existir com outliers, e nao sem
+eles.
+
+## O objeto `mr_fit`, componente a componente
+
+`mr_fit()` devolve um objeto de classe `mr_fit` com onze campos. Vale saber
+quais sao, porque quase todo o resto do pacote consome este objeto.
+
+```{r}
+#| label: anatomia-fit
+fitA <- mr_fit(FORM_A, A, goal = "explanation")
+usar("mr_fit", formula = "FORM_A", data = "dados_A()",
+     goal = "explanation", engine = "ols", tau = 0.5)
+tab(data.frame(campo = names(as.list(fitA)),
+               conteudo = c("a chamada que gerou o objeto",
+                            "a formula ajustada",
+                            "os dados usados, inteiros e nao apenas as colunas do modelo",
+                            "a intencao declarada: explicacao ou predicao",
+                            "o motor: ols, robust, quantile, kernel ou gam",
+                            "o modelo fitted, no formato do motor",
+                            "o quantil, quando o motor e quantile",
+                            "argumentos extras passados ao motor",
+                            "o numero de observacoes usadas",
+                            "o nome da resposta",
+                            "os nomes dos preditores, na ordem do modelo"),
+               stringsAsFactors = FALSE),
+    caption = paste("Os onze campos do objeto mr_fit. Repare que data traz a",
+                    "tabela inteira, e nao so as colunas que entraram no modelo:",
+                    "e o que permite predict() e mr_report() funcionarem depois."))
+```
+
+O campo `data` merece atencao. Ele guarda a tabela completa, nao um recorte das
+colunas do modelo. E por isso que `predict.mr_fit()` e `mr_report()` funcionam
+sem que o usuario precise reapresentar os dados.
+
+## O objeto `mr_diagnose` tem uma armadilha de estrutura
+
+`mr_diagnose()` devolve uma lista de oito elementos. Sete deles sao vetores
+nomeados, e um deles e texto. O ponto que costuma custar tempo e que **o
+elemento `$fit` e um vetor nomeado, e nao uma lista**: ele se acessa com
+`dg$fit["R2"]` e nao com `dg$fit$R2`.
+
+```{r}
+#| label: anatomia-diagnose
+dgA <- mr_diagnose(fitA)
+usar("mr_diagnose", x = "mr_fit")
+for (bloco in names(dgA)) {
+  cat("\n--- ", bloco, " ---\n", sep = "")
+  print(dgA[[bloco]])
+}
+```
+
+A forma de_fail do acesso esta medida, nao afirmada:
+
+```{r}
+#| label: armadilha-fit
+cat("classe de dgA$fit :", class(dgA$fit), "| comprimento:",
+    length(dgA$fit), "\n")
+cat("nomes disponiveis :", paste(names(dgA$fit), collapse = ", "), "\n\n")
+cat("acesso correto, por colchetes:\n")
+print(dgA$fit[c("R2", "adjusted_R2", "sigma")])
+cat("\nacesso por cifrao, que e o que se escreve por costume:\n")
+r_cifrao <- tryCatch(dgA$fit$R2, error = function(e) conditionMessage(e))
+cat("  ", r_cifrao, "\n")
+```
+
+Se o usuario escreve `dg$fit$R2`, recebe `NULL` e segue sem erro aparente. O
+mesmo vale para `rank`, `residuals`, `heteroscedasticity`, `specification` e
+`influence`: todos sao vetores nomeados. A @sec-nota registra este item.
+
+## O achado: os outliers apagam o gradiente de variancia
+
+Aqui esta a medicao que justifica o cenario A. A mesma variancia plantada, com
+e sem as tres observacoes deslocadas, produz diagnosticos completamente
+diferentes.
+
+```{r}
+#| label: achado-outliers
+A_sem <- dados_A()
+A_sem$yield_t_ha[LINHAS_OUTLIER_A] <- A_sem$yield_t_ha[LINHAS_OUTLIER_A] - DESVIO_OUTLIER_A
+
+fit_sem <- mr_fit(FORM_A, A_sem, goal = "explanation")
+dg_sem <- mr_diagnose(fit_sem)
+dg_com <- mr_diagnose(fitA)
+
+comparacao <- data.frame(
+  teste = c("Breusch-Pagan (heteroscedasticidade)",
+            "Shapiro-Wilk (normalidade do residuo)",
+            "RESET (forma funcional)"),
+  com_outliers = c(dg_com$heteroscedasticity[["p.value"]],
+                   dg_com$residuals[["shapiro_p"]],
+                   dg_com$specification[["p.value"]]),
+  sem_outliers = c(dg_sem$heteroscedasticity[["p.value"]],
+                   dg_sem$residuals[["shapiro_p"]],
+                   dg_sem$specification[["p.value"]]))
+comparacao$rejeita_H0_com <- comparacao$com_outliers < 0.05
+comparacao$rejeita_H0_sem <- comparacao$sem_outliers < 0.05
+tab(data.frame(teste = comparacao$teste,
+               p_com_outliers = fmt_p(comparacao$com_outliers),
+               rejeita_com = comparacao$rejeita_H0_com,
+               p_sem_outliers = fmt_p(comparacao$sem_outliers),
+               rejeita_sem = comparacao$rejeita_H0_sem),
+    caption = paste("O mesmo dado, com e sem as tres observacoes plantadas.",
+                    "A heteroscedasticidade e REAL nos dois casos, e o teste so",
+                    "a encontra em um deles."))
+```
+
+A leitura correta desta tabela e a que importa mais do livro inteiro. A
+variancia cresce com a argila nos dois conjuntos, por construcao, e nenhum
+criterio de ajuste muda isso. O que muda e o **poder do teste diante dos pontos
+deslocados**: os tres outliers inflam o quadrado do residuo em pontos isolados,
+e a regressao auxiliar que o teste de Breusch-Pagan monta perde o gradiente
+sistematico no meio do barulho.
+
+```{r}
+#| label: achado-outliers-figura
+comp <- rbind(
+  data.frame(condicao = "com os 3 outliers",
+             residuo = residuals(fitA$model)^2, argila = A$clay_pct),
+  data.frame(condicao = "sem os 3 outliers",
+             residuo = residuals(fit_sem$model)^2, argila = A_sem$clay_pct))
+ggplot(comp, aes(argila, residuo, colour = condicao)) +
+  geom_point(size = 1.5, alpha = .55) +
+  geom_smooth(method = "lm", formula = y ~ x, linewidth = .9) +
+  scale_colour_manual(values = c("com os 3 outliers" = VERM,
+                                "sem os 3 outliers" = AZUL)) +
+  labs(x = "Argila (%)", y = "Quadrado do residuo",
+       title = "O quadrado do residuo e o que o teste de variancia le",
+       subtitle = paste("A inclinacao das duas retas e a mesma; o que muda e",
+                        "a dispersao em volta delas")) +
+  tema_pacote()
+```
+
+E o que o pacote recomenda muda tambem, porque `mr_recommend()` le a mesma
+tabela de diagnostico:
+
+```{r}
+#| label: achado-outliers-recomenda
+rec_com <- mr_recommend(fitA); rec_sem <- mr_recommend(fit_sem)
+usar("mr_recommend", x = "mr_fit")
+cat("dominios com outliers :", paste(rec_com$domain, collapse = ", "), "\n")
+cat("dominios sem outliers :", paste(rec_sem$domain, collapse = ", "), "\n")
+tab(rec_com[, c("domain", "finding", "priority")],
+    caption = "Recomendacoes com os tres outliers presentes.")
+tab(rec_sem[, c("domain", "finding", "priority")],
+    caption = "Recomendacoes sem os tres outliers: a heteroscedasticidade aparece.")
+```
+
+::: {.callout-important}
+## A ordem correta de leitura
+
+Inspecione influencia **antes** de aceitar um teste de variancia que nao
+disparou. As tres observacoes plantadas aparecem com o Studentizado acima de 3,
+e sao exatamente as linhas `r paste(LINHAS_OUTLIER_A, collapse = ", ")`. O
+diagnostico de influencia e o que revela que o teste de variancia esta
+enxerga-lo, e nao a variancia que o teste nao viu.
+
+O pacote nao sugere essa ordem: `mr_diagnose()` calcula os tres testes em uma
+passada e nao comenta a dependencia entre eles.
+:::
+
+## `mr_influence`: quatro medidas e quatro bandeiras
+
+`mr_influence()` devolve uma linha por observacao, com treze colunas: as
+medidas de alavancagem e de distancia, mais quatro bandeiras booleanas
+calculadas com limiares explicitos.
+
+```{r}
+#| label: influencia
+infA <- mr_influence(fitA)
+usar("mr_influence", x = "mr_fit")
+tab(data.frame(medida = c("leverage", "rstandard", "rstudent",
+                          "cooks_distance", "dffits", "max_abs_dfbeta"),
+               o_que_mede = c("quanto a observacao puxa a fitted",
+                              "residuo padronizado pelo erro medio",
+                              "residuo excluindo a propria observacao",
+                              "soma quadratica de alavanca e residuo",
+                              "quanto o previsto inteiro mudaria sem a observacao",
+                              "maior mudanca em qualquer coeficiente sem a observacao"),
+               stringsAsFactors = FALSE),
+    caption = "As seis medidas de influencia que o pacote calcula.")
+```
+
+Os limiares das quatro bandeiras sao `2p/n` para alavancagem, `4/n` para Cook e
+DFFITS, e `2/sqrt(n)` para DFBETA, com `p` o numero de coeficientes. Todos
+estao calculados no pacote, e nenhum deles remove a observacao: eles sinalizam
+para inspecao.
+
+```{r}
+#| label: influencia-plantadas
+p_rank <- fitA$model$rank
+infA$plantada <- seq_len(nrow(infA)) %in% LINHAS_OUTLIER_A
+tab(infA[infA$plantada | abs(infA$rstudent) > 3,
+         c("row", "fitted", "residual", "leverage", "cooks_distance",
+           "rstudent", "flag_cook", "plantada")],
+    caption = paste("As tres observacoes plantadas e as demais com residuo",
+                    "studentizado acima de 3. Repare que a coluna `plantada`",
+                    "so existe nesta tabela, montada aqui, e nao no pacote."))
+```
+
+O grafico de alavanca contra residuo studentizado e a leitura mais rapida do
+que essas quatro bandeiras juntas, e mostra por que as tres plantadas nao sao os
+picos de nenhuma das duas medidas.
+
+```{r}
+#| label: influencia-figura
+ggplot(infA, aes(leverage, rstudent)) +
+  geom_hline(yintercept = c(-3, 3), linetype = "dashed", colour = CINZA) +
+  geom_vline(xintercept = 2 * p_rank / nrow(A), linetype = "dashed", colour = CINZA) +
+  geom_point(aes(colour = plantada), size = 2, alpha = .8) +
+  scale_colour_manual(values = c("FALSE" = CINZA, "TRUE" = VERM),
+                      labels = c("FALSE" = "demais observacoes",
+                                 "TRUE" = "plantadas")) +
+  annotate("text", x = max(infA$leverage) * .55, y = 4.4,
+           label = "linhas tracejadas: residuo 3 e alavanca 2p/n",
+           colour = "grey30", size = 3.3, hjust = 0) +
+  labs(x = "Alavancagem (h)", y = "Residuo studentizado",
+       title = "Alavanca contra residuo: as tres plantadas no canto",
+       subtitle = "Elas somam residuo grande e alavanca alta") +
+  tema_pacote()
+```
+
+## Recuperacao da verdade plantada
+
+A vantagem de o cenario A ter coeficientes verdadeiros conhecidos e que a
+pergunta "o procedimento acertou" tem resposta. E vale faze-la em duas
+leituras, porque taxa de acerto exato e uma leitura ingenua.
+
+```{r}
+#| label: recuperacao-verdade
+iv_clas <- mr_inference(fitA, "classical")
+usar("mr_inference", x = "mr_fit", vcov = "classical", conf = 0.95)
+verdade <- c(VERDADE_A[["intercept"]], VERDADE_A[["pH"]], VERDADE_A[["MO"]],
+             0, VERDADE_A[["P"]], VERDADE_A[["K"]],
+             VERDADE_A[["umidade"]], VERDADE_A[["chuva"]])
+rec <- data.frame(termo = iv_clas$term, verdadeiro = verdade,
+                  estimativa = round(iv_clas$estimate, 4),
+                  erro_padrao = round(iv_clas$std_error, 4))
+rec$dentro_1_se <- abs(rec$estimativa - rec$verdadeiro) <= rec$erro_padrao
+rec$dentro_2_se <- abs(rec$estimativa - rec$verdadeiro) <= 2 * rec$erro_padrao
+tab(rec, caption = paste(
+  "Verdade plantada contra estimacao de MQO. A leitura honesta e a coluna",
+  "`dentro_1_se`: quantos coeficientes verdadeiros caem dentro do intervalo de",
+  "confianca de 95%. A leitura ingenua seria dizer que o modelo acertou."))
+```
+
+```{r}
+#| label: recuperacao-leitura2
+## clay_pct e o quarto termo e nao tem efeito plantado: nao entra na contagem
+idx_efeito <- which(rec$termo != "clay_pct")[-1]
+dentro1 <- rec$dentro_1_se[idx_efeito]
+dentro2 <- rec$dentro_2_se[idx_efeito]
+cat("termos do modelo            :", nrow(rec), "\n")
+cat("termos com efeito plantado  :", length(idx_efeito), "\n")
+cat("verdadeiro dentro de 1 erro  :", sum(dentro1), "\n")
+cat("verdadeiro dentro de 2 erros :", sum(dentro2), "\n")
+cat("termos dentro de 1 erro     :",
+    paste(rec$termo[idx_efeito][dentro1], collapse = ", "), "\n")
+cat("fora de 2 erros             :",
+    paste(rec$termo[idx_efeito][!dentro2], collapse = ", "), "\n")
+cat("\na argila, sem efeito plantado, recebe estimativa",
+    fmt(iv_clas$estimate[iv_clas$term == "clay_pct"], 4),
+    "com erro-padrao",
+    fmt(iv_clas$std_error[iv_clas$term == "clay_pct"], 4), "\n")
+cat("R2 do ajuste:", fmt(summary(fitA$model)$r.squared, 4), "\n")
+```
+
+A leitura que interessa e a ultima. A argila foi incluida no modelo **para
+carregar a variancia do erro**, e nao para ter efeito. O coeficiente estimado
+para ela nao e zero, e nao deveria ser: com heteroscedasticidade nao
+modelada, o MQO nao e eficiente, e o estimador deixa de ser o melhor estimador
+linear sem vies. A @sec-colinear mostra que isso e ainda menos grave quando
+esta correlacionada com outras variaveis.
+
+## A leitura do ajuste, em uma frase
+
+O `summary()` do objetofitted traz o resumo convencional, e o
+`mr_diagnose()` traz a auditoria. Os dois devem ser lidos, e nesta ordem: o
+resumo diz se o modelo descreve os dados, e a auditoria diz se os dados estao
+dizendo o que voce acha que dizem.
+
+```{r}
+#| label: ajuste-resumo
+tab(data.frame(quantidade = names(dgA$fit), valor = round(dgA$fit, 4),
+               stringsAsFactors = FALSE),
+    caption = paste("O bloco `fit` de mr_diagnose, em nove numeros: n, p,",
+                    "rank efetivo, graus de residuo, R2, R2 ajustado, sigma,",
+                    "AIC e BIC. A razao n sobre o numero de preditores",
+                    "efetivos e o que separa um ajuste-info de um ajuste-fragil."))
+```
+
+```{r}
+#| label: fechar-02
+salvar_uso("02")
+salvar_decisoes("02",
+  paste("Inspecionar mr_influence() antes de aceitar o teste de variancia",
+        "que nao disparou, e nao o contrario."),
+  paste("O mesmo dado, com gradiente de variancia plantado identico, produz",
+        "Breusch-Pagan p = ", fmt_p(dg_com$heteroscedasticity[['p.value']]),
+        "com os tres outliers e p = ",
+        fmt_p(dg_sem$heteroscedasticity[['p.value']]), "sem eles. Shapiro-Wilk",
+        "continua rejeitando nos dois casos, e mr_influence() localiza as tres",
+        "linhas plantadas pelo Studentizado. O pacote nao sugere esta ordem."))
+```
+
+

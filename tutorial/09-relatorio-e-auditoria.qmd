@@ -1,0 +1,234 @@
+# Relatorio, traceabilidade e o fim da API {#sec-relatorio}
+
+```{r}
+#| label: setup-09
+#| include: false
+source("_common.R")
+A <- dados_A(); B <- dados_B(); F <- dados_F()
+```
+
+Falta um capitulo sobre as duas funcoes que fecham o fluxo de trabalho, e que
+sao as que transformam uma sequencia de comandos em um documento que outra
+pessoa consegue auditar. Sao elas tambem as duas que revelam mais sobre o
+comportamento real do pacote, porque uma delas **falha em silencio** num caso
+especifico.
+
+## `mr_capabilities`: o que esta instalado de fato
+
+A primeira funcao do livro nao e do pacote, e a ultima: `mr_capabilities()`.
+Ela devolve a lista de modulos, o motor de cada um e se o pacote de
+dependencia esta disponivel nesta maquina.
+
+```{r}
+#| label: capacidades
+caps <- as.data.frame(mr_capabilities())
+usar("mr_capabilities")
+tab(caps, caption = paste(
+  "Os modulos do pacote e o motor de cada um. A coluna `available` e",
+  "calculada no momento do render, com requireNamespace(), e nao declarada.",
+  "Se voce ler este livro numa maquina sem `stabs`, a linha correspondente",
+  "vai aparecer como indisponivel, e o texto continua valendo."))
+cat("\nmodulos disponiveis:", sum(caps$available), "de", nrow(caps), "\n")
+cat("modulos indisponiveis:",
+    if (any(!caps$available)) paste(caps$module[!caps$available], collapse = ", ")
+    else "nenhum nesta maquina", "\n")
+```
+
+Este quadro e a resposta honesta a pergunta "posso rodar o livro inteiro aqui?".
+O pacote foi desenhado para **funcionar sem os motores opcionais**: o nucleo de
+MQO, diagnosticos, colinearidade, inferencia e relatorio roda com R puro, e uma
+funcao que precisa de motor opcional falha com mensagem que nomeia o pacote que
+falta. O livro nao depende de nenhum dos opcionais para os capitulos 1 a 4.
+
+```{r}
+#| label: capacidade-ausente
+## o que o usuario ve quando o backend nao esta
+mensagem_backend <- tryCatch(
+  multiRegFlow::mr_importance(
+    structure(list(), class = "mr_fit"), "lmg"),
+  error = function(e) conditionMessage(e))
+cat("mensagem para objeto invalido:", mensagem_backend, "\n")
+```
+
+## `mr_example_data`: os cinco conjuntos congelados
+
+O pacote tambem entrega cinco conjuntos sinteticos congelados. Eles sao
+materiais de ensino, e a documentacao do pacote e explicita que nunca devem ser
+apresentados como medicoes de campo.
+
+```{r}
+#| label: datasets-pacote
+nomes_pacote <- c("soil_fertility", "plant_growth", "agronomy_collinear",
+                  "irrigation_nonlinear", "agronomy_heteroskedastic")
+tab(data.frame(dataset = nomes_pacote,
+               n = vapply(nomes_pacote, function(z) nrow(mr_example_data(z)), integer(1)),
+               p = vapply(nomes_pacote, function(z) ncol(mr_example_data(z)), integer(1)),
+               stringsAsFactors = FALSE),
+    caption = paste("Os cinco conjuntos do pacote. Este livro usa dados",
+                    "PROPRIOS, gerados aqui, e nao estes, porque os cenarios",
+                    "precisam de discrepancia plantada e estes nao tem."))
+usar("mr_example_data", name = "os cinco, um a um")
+cat("chamada sem argumento devolve o primeiro conjunto, nao a lista de nomes:\n")
+cat("  dim(mr_example_data()) =", paste(dim(mr_example_data()), collapse = " x "), "\n")
+cat("  nome invalido e recusado com a lista de opcoes:\n")
+cat("   ", tryCatch(mr_example_data("nao_existe"),
+                   error = function(e) conditionMessage(e)), "\n")
+```
+
+::: {.callout-note}
+## Um detalhe que pode confundir
+
+`mr_example_data()` **sem argumento** nao lista os conjuntos disponiveis: devolve
+o primeiro da lista, `soil_fertility`. A documentacao do pacote descreve o
+parametro `name` como "One of ...", e quem espera um catalogo recebe um quadro de
+dados. Nao e erro, mas e a forma como a funcao foi escrita, e vale saber antes
+de escribir codigo que dependa dela. O @sec-cobertura registra este item na
+nota tecnica.
+:::
+
+## `mr_report`: o documento que outra pessoa consegue auditar
+
+`mr_report()` produz Markdown. E a funcao que fecha o fluxo: ela recolhe o
+ajuste, os diagnosticos, a inferencia, a colinearidade, as observacoes
+influentes e as recomendacoes em um unico texto.
+
+```{r}
+#| label: relatorio-cabecalho
+rel <- mr_report(mr_fit(FORM_A, A, goal = "explanation"))
+usar("mr_report", x = "mr_fit", vcov = "auto", validation = NULL,
+     v = 5, repeats = 3, seed = 123)
+cat("classe do retorno:", class(rel), "| caracteres:", nchar(rel), "\n")
+cat("numero de linhas :", length(strsplit(rel, "\n")[[1]]), "\n\n")
+cat("secoes encontradas:\n")
+linhas_rel <- strsplit(rel, "\n")[[1]]
+cabec <- linhas_rel[grepl("^#+ ", linhas_rel)]
+for (h in cabec) cat("  ", h, "\n")
+```
+
+O relatorio tem um `vcov` proprio, com valores `auto`, `classical` e `HC3`.
+O `auto` escolhe a covarianca com base no que o diagnostico encontrou, e e a
+opcao que o livro recomenda em campo.
+
+```{r}
+#| label: relatorio-vcov
+tab(data.frame(vcov = c("auto", "classical", "HC3"),
+               o_que_faz = c("escolhe a covarianca a partir do diagnostico",
+                             "forca o MQO classico, com o intervalo antigo",
+                             "forca HC3, com o intervalo robusto"),
+               caracteres = c(nchar(mr_report(mr_fit(FORM_A, A), vcov = "auto")),
+                              nchar(mr_report(mr_fit(FORM_A, A), vcov = "classical")),
+                              nchar(mr_report(mr_fit(FORM_A, A), vcov = "HC3"))),
+               stringsAsFactors = FALSE),
+    caption = paste("O argumento vcov de mr_report. A coluna de caracteres",
+                    "mostra que as tres opcoes produzem textos de tamanhos",
+                    "diferentes, o que confirma que o caminho exercido muda."))
+cat("vcov invalido e recusado:\n  ",
+    tryCatch(mr_report(mr_fit(FORM_A, A), vcov = "HCX"),
+             error = function(e) conditionMessage(e)), "\n")
+```
+
+O relatorio tambem aceita `validation`, e quando o objetivo do ajuste e
+predicao, o relatorio inclui a tabela de desempenho fora de amostra.
+
+```{r}
+#| label: relatorio-arquivo
+destino <- file.path(ART, "relatorio-cenario-A.md")
+mr_report(mr_fit(yield_t_ha ~ organic_matter_pct + available_P_mg_dm3 +
+                          season_rain_mm, F, goal = "prediction"),
+          file = destino,
+          validation = TRUE, v = 5, repeats = 2, seed = 11)
+cat("arquivo gravado:", basename(destino), "|",
+    "bytes:", file.size(destino), "\n")
+cat("existe:", file.exists(destino), "\n")
+linhas_f <- readLines(destino, warn = FALSE)
+cat("primeira linha do arquivo:", linhas_f[1], "\n")
+```
+
+Quando `file` e fornecido, a funcao **grava o arquivo e continua devolvendo o
+texto**. Quem esquece de usar o valor de retorno e passa a trabalhar com `NULL`
+depois de pedir o relatorio, o que e a origem classica do erro "o relatorio sumiu".
+
+## O achado: `mr_compare` devolve `NA` sem explicar
+
+Este capitulo fecha com um comportamento que merece registro, e que foi
+descoberto executando e nao lendo.
+
+`mr_compare()` devolve duas tabelas: `$inference`, com ajuste, e `$prediction`,
+com desempenho fora de amostra. A tabela de ajuste calcula AIC e BIC. Para os
+motores `robust` e `kernel`, essas duas colunas **sao `NA`**, porque
+`stats::AIC()` nao se aplica aos objetos desses motores, e o pacote preenche o
+valor com `NA` em silencio, sem aviso.
+
+```{r}
+#| label: achado-na-silencioso
+C <- dados_C()
+f_lin <- mr_fit(yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C, C)
+f_rob <- mr_fit(yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C, C,
+                engine = "robust")
+f_ker <- mr_fit(yield_t_ha ~ irrigation_mm + N_rate_kg_ha + mean_temp_C, C,
+                engine = "kernel")
+cmp4 <- mr_compare(linear = f_lin, robust = f_rob, kernel = f_ker,
+                   v = 5, repeats = 1, seed = 7)
+tab(cmp4$inference, caption = paste(
+  "mr_compare()$inference para tres motores. AIC e BIC sao NA para robust e",
+  "kernel, e a coluna `note` do lado de predicao tambem fica vazia. O usuario",
+  "ve NA e nao recebe nenhuma pista de que a causa e o motor, e nao o modelo."))
+cat("\nlinhas com AIC NA:", sum(is.na(cmp4$inference$AIC)), "de",
+    nrow(cmp4$inference), "\n")
+cat("motores afetados:", paste(cmp4$inference$model[is.na(cmp4$inference$AIC)],
+                              collapse = ", "), "\n")
+```
+
+E o motor `robust` acrescenta um segundo problema no mesmo comando: o
+`robustbase` emite um aviso de nao convergencia durante a validacao, e o
+resultado **entra na tabela assim mesmo**, sem marca de que o ajuste nao
+convergiu.
+
+```{r}
+#| label: achado-aviso-vaza
+cat("o aviso que vaza do motor robust:\n")
+aviso <- withCallingHandlers(
+  tryCatch(mr_validate(f_rob, v = 5, repeats = 1, seed = 7), silent = TRUE),
+  warning = function(w) {
+    cat("  AVISO:", conditionMessage(w), "\n"); invokeRestart("muffleWarning")
+  })
+cat("o objeto de retorno continua sendo um data.frame de",
+    nrow(aviso$metrics), "linha, sem nenhuma coluna que marque a nao convergencia\n")
+```
+
+::: {.callout-important}
+## O que o leitor deve fazer com este achado
+
+A leitura correta nao e "o pacote esta quebrado". E: **quando uma celula do
+resultado for `NA`, pergunte de que tipo de celula se trata antes de concluir
+sobre o modelo**. Uma celula `NA` no AIC de um motor robusto significa que a
+metrica nao existe para aquele motor, e nao que o modelo e ruim. A
+@sec-nota tecnica e o `RELATORIO-AO-AUTOR.md` registram o item com a correcao
+sugerida.
+:::
+
+## O que o capitulo nao cobre
+
+Este capitulo nao discute **tamanho de amostra** nem **plano de amostragem**, que
+sao decisoes anteriores a qualquer uma das funcoes do pacote. `mr_validate()`
+informa o erro de previsao de um modelo ajustado; ele nao diz quantas
+parcelas seriam necessarias para reduzi-lo. Se a pergunta for quantas
+parcelas sao necessarias, a resposta esta em outro lugar.
+
+```{r}
+#| label: fechar-09
+cat("funcoes do pacote usadas neste capitulo: mr_capabilities, mr_example_data,",
+    "mr_report, mr_compare, mr_validate\n")
+salvar_uso("09")
+salvar_decisoes("09",
+  paste("Ler a coluna `note` de mr_compare()$prediction e a coluna `clusters` de",
+        "mr_inference() antes de concluir sobre o modelo."),
+  paste("mr_compare() devolve AIC e BIC como NA para os motores robust e kernel,",
+        "sem aviso e sem texto na coluna note; mr_inference(vcov='cluster')",
+        "aceita vetor numerico continuo e devolve 160 agrupamentos em 180",
+        "observacoes, tambem sem aviso. Os dois numeros sao visiveis nas",
+        "colunas, e por isso a leitura existe e e o que separa conclusao de",
+        "palpite."))
+```
+
+

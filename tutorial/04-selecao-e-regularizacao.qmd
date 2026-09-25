@@ -1,0 +1,656 @@
+# Selecao e regularizacao {#sec-selecao}
+
+```{r}
+#| label: setup-04
+#| include: false
+source("_common.R")
+```
+
+Este capitulo trata das duas formas que o pacote oferece para lidar com um
+modelo grande demais para o dado que existe. `mr_select()` escolhe um conjunto
+de termos e **descarta** o resto. `mr_regularize()` mantem todos os termos e
+**encolhe** os coeficientes. A diferenca entre as duas nao e de detalhe: uma
+muda o que se pode dizer sobre o modelo, a outra nao muda nada do que se pode
+dizer e apenas estabiliza o erro.
+
+O cenario e o mesmo do capitulo anterior, o **B**, com as tres medidas de
+textura redundantes. Escolhemos esse cenario porque e nele que a escolha entre
+os dois caminhos produz consequencia observavel, e nao apenas diferenca de
+estilistica de saida.
+
+```{r}
+#| label: 04-cenario-b
+B <- dados_B()
+FORM_B <- yield_t_ha ~ clay_pct + CEC_cmolc_dm3 + sandy_pct + soil_pH +
+  available_P_mg_dm3 + exchangeable_K_mg_dm3 + season_rain_mm
+fitB <- mr_fit(FORM_B, B, goal = "explanation")
+nB <- nrow(B); pB <- ncol(model.matrix(fitB$model)) - 1L
+nomes_B <- colnames(model.matrix(fitB$model))[-1]
+usar("mr_fit", formula = "FORM_B", data = "dados_B()",
+     goal = "explanation", engine = "ols", tau = 0.5)
+cat("n =", nB, "| preditores candidatos =", pB, "\n")
+```
+
+## Os seis metodos de `mr_select()`, um a um
+
+O pacote implementa AIC e BIC **diretamente**, com `stats::step()`, e delega os
+outros quatro a bibliotecas externas. A divisao importa para quem precisa
+reproduzir: dois metodos nao saem do R base, e quatro dependem de pacotes que
+precisam estar instalados.
+
+```{r}
+#| label: 04-tabela-metodos
+metodos <- c("aic", "bic", "best_subset", "lasso", "elastic_net", "stability")
+tab(data.frame(metodo = metodos,
+               quem_executa = c("stats::step, dentro do pacote",
+                                "stats::step, dentro do pacote",
+                                "leaps::regsubsets, delegado",
+                                "glmnet::cv.glmnet, delegado",
+                                "glmnet::cv.glmnet, delegado",
+                                "stabs::stabsel, delegado"),
+               o_que_e = c("stepwise nos dois sentidos, com penalidade por AIC",
+                           "stepwise nos dois sentidos, com penalidade por BIC",
+                           "melhor subconjunto por enumeracao exaustiva",
+                           "lasso com validacao cruzada e lambda no 1se",
+                           "mistura lasso e ridge, com alfa controlavel",
+                           "lasso repetido em subamostras, com corte de frequencia"),
+               devolve = c("termos retidos e o valor do criterio",
+                           "termos retidos e o valor do criterio",
+                           "subconjuntos por BIC e por R2 ajustado",
+                           "termos nao nulos e os dois lambdas",
+                           "termos nao nulos e os dois lambdas",
+                           "termos acima do corte e as probabilidades"),
+               stringsAsFactors = FALSE),
+    caption = paste("Os seis metodos de mr_select, com quem executa cada um. Nos",
+                    "quatro ultimos o resultado nao esta em `model`, e sim em",
+                    "`coefficients` ou `selection_probabilities`."))
+```
+
+Todos os seis foram exercitados aqui, e todos os seis estao registrados no
+bloco de uso do capitulo.
+
+```{r}
+#| label: 04-six-metodos
+sel_aic <- mr_select(fitB, method = "aic")
+usar("mr_select", x = "mr_fit", method = "aic", alpha = 0.5, keep = "NULL",
+     seed = 123, lambda = "1se")
+sel_bic <- mr_select(fitB, method = "bic")
+usar("mr_select", x = "mr_fit", method = "bic", alpha = 0.5, keep = "NULL",
+     seed = 123, lambda = "1se")
+sel_bs <- mr_select(fitB, method = "best_subset")
+usar("mr_select", x = "mr_fit", method = "best_subset", alpha = 0.5, keep = "NULL",
+     seed = 123, lambda = "1se")
+sel_las <- mr_select(fitB, method = "lasso")
+usar("mr_select", x = "mr_fit", method = "lasso", alpha = 0.5, keep = "NULL",
+     seed = 123, lambda = "1se")
+sel_en <- mr_select(fitB, method = "elastic_net")
+usar("mr_select", x = "mr_fit", method = "elastic_net", alpha = 0.5, keep = "NULL",
+     seed = 123, lambda = "1se")
+sel_st <- mr_select(fitB, method = "stability")
+usar("mr_select", x = "mr_fit", method = "stability", alpha = 0.5, keep = "NULL",
+     seed = 123, lambda = "1se")
+```
+
+```{r}
+#| label: 04-tabela-resultados
+resumo_sel <- data.frame(
+  metodo = c("aic", "bic", "best_subset (BIC)", "best_subset (R2 ajustado)",
+             "lasso", "elastic_net", "stability"),
+  n_retidos = c(length(sel_aic$selected), length(sel_bic$selected),
+                length(sel_bs$variables_by_bic),
+                length(sel_bs$variables_by_adjr2),
+                length(sel_las$selected), length(sel_en$selected),
+                length(sel_st$selected)),
+  retidos = c(paste(sel_aic$selected, collapse = ", "),
+              paste(sel_bic$selected, collapse = ", "),
+              paste(sel_bs$variables_by_bic, collapse = ", "),
+              paste(sel_bs$variables_by_adjr2, collapse = ", "),
+              paste(sel_las$selected, collapse = ", "),
+              paste(sel_en$selected, collapse = ", "),
+              if (length(sel_st$selected) == 0L) "(nenhum)"
+              else paste(sel_st$selected, collapse = ", ")),
+  stringsAsFactors = FALSE)
+tab(resumo_sel,
+    caption = paste("Os seis metodos no mesmo ajuste, no mesmo dado e com a",
+                    "mesma semente. Quatro retem conjuntos diferentes entre si,",
+                    "e o sexto nao retem nenhum: o motivo disso esta na secao de",
+                    "estabilidade, mais adiante."))
+```
+
+O padrao e claro. AIC retem **tudo**; BIC retem um subconjunto; os dois
+melhores-subconjunto discordam entre si; e a selecao por estabilidade nao
+retem nada. Cada uma dessas respostas e correta dentro da sua propria regra, e
+e por isso que a escolha do metodo e uma decisao cientifica antes de ser uma
+decisao tecnica.
+
+```{r}
+#| label: 04-comparacao-aic-bic
+comum <- c("soil_pH", "available_P_mg_dm3", "season_rain_mm")
+cat("AIC retem", length(sel_aic$selected), "de", pB, "termos\n")
+cat("BIC retem", length(sel_bic$selected), "de", pB, "termos\n")
+cat("AIC e BIC produzem o mesmo conjunto?",
+    identical(sel_aic$selected, sel_bic$selected), "\n")
+cat("criterio AIC:", fmt(sel_aic$criterion, 2),
+    "| criterio BIC:", fmt(sel_bic$criterion, 2), "\n")
+cat("os dois modelos conluem em", length(comum),
+    "termos:", paste(comum, collapse = ", "), "\n")
+cat("so no AIC:", paste(setdiff(sel_aic$selected, sel_bic$selected),
+                        collapse = ", "), "\n")
+cat("so no BIC:", paste(setdiff(sel_bic$selected, sel_aic$selected),
+                        collapse = ", "), "\n")
+```
+
+A diferenca entre AIC e BIC nao e de afinidade com o modelo completo. As duas
+regras olham o mesmo ajuste e discordam sobre quantos preditores o dado
+sustenta. AIC penaliza cada parametro a menos, BIC penaliza a mais, e em um
+modelo com predicao redundante essa diferenca de penalidade vira diferenca de
+conjunto.
+
+```{r}
+#| label: 04-figura-selecao
+retidos_por_metodo <- list(
+  aic = sel_aic$selected, bic = sel_bic$selected,
+  `best_subset (BIC)` = sel_bs$variables_by_bic,
+  `best_subset (R2 ajustado)` = sel_bs$variables_by_adjr2,
+  lasso = sel_las$selected, `elastic net` = sel_en$selected,
+  estabilidade = sel_st$selected)
+fig_sel <- do.call(rbind, lapply(names(retidos_por_metodo), function(m) {
+  data.frame(metodo = m, preditor = nomes_B,
+             retido = nomes_B %in% retidos_por_metodo[[m]],
+             stringsAsFactors = FALSE)
+}))
+fig_sel$metodo <- factor(fig_sel$metodo, levels = names(retidos_por_metodo))
+ggplot(fig_sel, aes(metodo, preditor, fill = retido)) +
+  geom_tile(colour = "white", linewidth = 0.6) +
+  scale_fill_manual(values = c("FALSE" = "#EFEFEF", "TRUE" = AZUL),
+                    labels = c("FALSE" = "descartado", "TRUE" = "retido")) +
+  labs(x = NULL, y = NULL,
+       title = "Seis criterios, seis conjuntos de preditores",
+       subtitle = paste("O trio de textura e o que mais muda de estado entre",
+                        "os metodos; a faixa cinza e o que cada regra jogou fora")) +
+  tema_pacote(9) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+## O que a selecao stepwise nao corrige
+
+Este e o ponto em que a maioria dos leitores que programa em R tropeca, e vale
+formular com cuidado. Duas afirmacoes diferentes costumam se misturar:
+
+- a selecao stepwise **enviesa** a estimativa do preditor que ela escolhe;
+- a comparacao de modelos que o stepwise faz e **invalida**.
+
+A segunda afirmacao esta errada. A comparacao AIC e BIC entre modelos
+aninhados permanece um criterio de ajuste legitimo: o menor criterio indica o
+modelo preferido **por aquela regra**. O que a selecao nao faz e **calibrar** a
+incerteza do modelo que ela escolheu.
+
+E medivel. Basta comparar o erro-padrao do mesmo preditor no modelo completo e
+no modelo selecionado.
+
+```{r}
+#| label: 04-stepwise-nao-calibra
+BIC_FORM <- stats::reformulate(sel_bic$selected, response = "yield_t_ha")
+fit_bic <- mr_fit(BIC_FORM, B, goal = "explanation")
+usar("mr_fit", formula = "reformulate(sel_bic$selected)", data = "dados_B()",
+     goal = "explanation", engine = "ols", tau = 0.5)
+iv_full <- mr_inference(fitB, "classical")
+usar("mr_inference", x = "mr_fit", vcov = "classical", cluster = "NULL", conf = 0.95)
+iv_bic <- mr_inference(fit_bic, "classical")
+p_common <- setdiff(intersect(iv_full$term, iv_bic$term), "(Intercept)")
+pega <- function(iv, termo, campo) iv[[campo]][iv$term == termo]
+tab(data.frame(termo = p_common,
+               estimativa_completo = fmt(vapply(p_common, pega, numeric(1),
+                                                iv = iv_full, campo = "estimate"), 4),
+               estimativa_BIC = fmt(vapply(p_common, pega, numeric(1),
+                                           iv = iv_bic, campo = "estimate"), 4),
+               se_completo = fmt(vapply(p_common, pega, numeric(1),
+                                        iv = iv_full, campo = "std_error"), 4),
+               se_BIC = fmt(vapply(p_common, pega, numeric(1),
+                                   iv = iv_bic, campo = "std_error"), 4),
+               razao_se = fmt(vapply(p_common, pega, numeric(1), iv = iv_full,
+                                     campo = "std_error") /
+                                vapply(p_common, pega, numeric(1), iv = iv_bic,
+                                       campo = "std_error"), 2),
+               stringsAsFactors = FALSE),
+    caption = paste("O mesmo preditor, estimado nos dois modelos. Nos termos que",
+                    "a colinearidade afeta, o erro-padrao muda de ordem de",
+                    "grandeza sem que nenhuma observacao nova tenha entrado."))
+```
+
+O CEC e o caso. Ele permanece no modelo nos dois casos, e mesmo assim o erro
+padrao cai por um fator de ordem de grandeza quando os outros dois termos de
+textura saem. **Nenhuma observacao foi adicionada**: o intervalo encolheu
+porque o modelo ficou mais estreito, nao porque o dado ficou mais preciso.
+
+```{r}
+#| label: 04-cec-exemplo
+termo <- "CEC_cmolc_dm3"
+est_c <- pega(iv_full, termo, "estimate"); se_c <- pega(iv_full, termo, "std_error")
+est_b <- pega(iv_bic, termo, "estimate");   se_b <- pega(iv_bic, termo, "std_error")
+larg_c <- pega(iv_full, termo, "conf_high") - pega(iv_full, termo, "conf_low")
+larg_b <- pega(iv_bic, termo, "conf_high") - pega(iv_bic, termo, "conf_low")
+cat("CEC no modelo completo: estimativa", fmt(est_c, 4), "| erro-padrao", fmt(se_c, 4), "\n")
+cat("CEC no modelo BIC      : estimativa", fmt(est_b, 4), "| erro-padrao", fmt(se_b, 4), "\n")
+cat("razao de erro-padrao   :", fmt(se_c / se_b, 2), "\n")
+cat("largura do intervalo   :", fmt(larg_c, 4), "contra", fmt(larg_b, 4), "\n")
+cat("n de observacoes nos dois modelos:", nB, "| p de preditores:",
+    pB, "contra", length(sel_bic$selected), "\n")
+```
+
+O que a selecao fez, aqui, nao foi descobrir que o CEC e mais informativo do
+que a argila. Foi **escolher quais variaveis dividem o erro com ele**, e isso e
+uma decisao do criterio, nao uma propriedade do dado. O mesmo preditor, no
+mesmo dado, tem a incerteza trocada por um fator que o usuario escolheu.
+
+::: {.callout-important}
+## A formulacao honesta
+
+Nao e que "a selecao enviesa o coeficiente". E que **o intervalo de confianca
+que sai de um modelo selecionado descreve o ajuste condicional a aquela
+selecao**, e a selecao foi feita olhando o mesmo dado. Quem relata o intervalo
+como se ele fosse o intervalo de um preditor escolhido por desenho esta
+relatando uma incerteza que o criterio, e nao a ciencia, escolheu.
+:::
+
+```{r}
+#| label: 04-figura-cec
+verdade_cec <- 0.22
+dados_cec <- data.frame(
+  modelo = c("modelo completo", "modelo BIC", "verdade plantada"),
+  lo = c(pega(iv_full, termo, "conf_low"), pega(iv_bic, termo, "conf_low"),
+         verdade_cec),
+  hi = c(pega(iv_full, termo, "conf_high"), pega(iv_bic, termo, "conf_high"),
+         verdade_cec),
+  rotulo = c(paste0(nB, " obs, ", pB, " preditores"),
+             paste0(nB, " obs, ", length(sel_bic$selected), " preditores"),
+             "valor verdadeiro plantado"),
+  stringsAsFactors = FALSE)
+ggplot(dados_cec, aes(y = modelo)) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = CINZA) +
+  geom_vline(xintercept = verdade_cec, linetype = "dotted", colour = VERDE) +
+  geom_linerange(aes(xmin = lo, xmax = hi, colour = modelo), linewidth = 1.2) +
+  geom_point(aes(x = (lo + hi) / 2, colour = modelo), size = 3) +
+  scale_colour_manual(values = c("modelo completo" = AZUL, "modelo BIC" = LARANJA,
+                                 "verdade plantada" = VERDE), guide = "none") +
+  geom_text(aes(x = hi, label = rotulo), hjust = -0.1, size = 3.2,
+            colour = "grey25") +
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.80))) +
+  labs(x = "Coeficiente do CEC (t/ha por cmolc/dm3)", y = NULL,
+       title = "O intervalo do CEC encolhe porque o modelo encolheu",
+       subtitle = "Linha pontilhada: o valor verdadeiro plantado no cenario B") +
+  tema_pacote()
+```
+
+## `keep`: a unica forma de amarrar a selecao
+
+`keep` existe para o caso em que a ciencia ja decidiu quais termos nao saem do
+modelo, e o criterio so pode escolher entre os outros. E a unica forma de
+declarar essa decisao na propria chamada.
+
+```{r}
+#| label: 04-keep
+sel_keep1 <- mr_select(fitB, method = "aic", keep = "clay_pct")
+usar("mr_select", x = "mr_fit", method = "aic", alpha = 0.5, keep = "'clay_pct'",
+     seed = 123, lambda = "1se")
+sel_keep2 <- mr_select(fitB, method = "bic", keep = c("clay_pct", "soil_pH"))
+usar("mr_select", x = "mr_fit", method = "bic", alpha = 0.5,
+     keep = "c('clay_pct', 'soil_pH')", seed = 123, lambda = "1se")
+tab(data.frame(chamada = c("bic, sem keep", "aic, keep = clay_pct",
+                           "bic, keep = clay_pct e soil_pH"),
+               n_retidos = c(length(sel_bic$selected), length(sel_keep1$selected),
+                             length(sel_keep2$selected)),
+               retidos = c(paste(sel_bic$selected, collapse = ", "),
+                           paste(sel_keep1$selected, collapse = ", "),
+                           paste(sel_keep2$selected, collapse = ", ")),
+               stringsAsFactors = FALSE),
+    caption = paste("O termo obrigatorio nunca e removido, e o criterio passa a",
+                    "escolher apenas entre os termos que sobram."))
+```
+
+O termo que nao existe no modelo faz a chamada parar **antes** de comecar, e a
+mensagem nomeia o termo faltante.
+
+```{r}
+#| label: 04-keep-erro
+erro_keep <- tryCatch(mr_select(fitB, method = "bic", keep = "variavel_inexistente"),
+                      error = function(e) conditionMessage(e))
+erro_keep2 <- tryCatch(mr_select(fitB, method = "bic",
+                                keep = c("clay_pct", "nome_que_nao_existe")),
+                       error = function(e) conditionMessage(e))
+usar("mr_select", x = "mr_fit", method = "bic", alpha = 0.5,
+     keep = "'variavel_inexistente'", seed = 123, lambda = "1se")
+tab(data.frame(keep = c("'variavel_inexistente'",
+                        "c('clay_pct', 'nome_que_nao_existe')"),
+               mensagem = c(erro_keep, erro_keep2),
+               stringsAsFactors = FALSE),
+    caption = paste("Com dois termos obrigatorios, so o inexistente aparece na",
+                    "mensagem. O pacote filtra o que existe e reporta apenas o",
+                    "que falta."))
+```
+
+## O metodo de estabilidade nao retem nada, e a razao e informativa
+
+A selecao por estabilidade reamostra subconjuntos e conta com que frequencia
+cada preditor entra. O resultado aqui e o corte de frequencia nao sendo
+alcancado por nenhum preditor, o que nao e erro do pacote e sim informacao
+sobre o dado: no cenario B, com o trio de textura se substituindo uns aos
+outros, nenhum preditor entra com frequencia suficiente.
+
+```{r}
+#| label: 04-estabilidade
+prob <- sel_st$selection_probabilities
+tab(data.frame(preditor = names(prob),
+               probabilidade = fmt(prob, 3),
+               acima_do_corte = prob > sel_st$cutoff,
+               acima_da_metade = prob > 0.5,
+               stringsAsFactors = FALSE),
+    caption = paste("Probabilidade de selecao de cada preditor. O corte do",
+                    "pacote esta em", fmt(sel_st$cutoff, 2),
+                    "e nenhum preditor o alcanca."))
+cat("corte do pacote:", fmt(sel_st$cutoff, 2), "\n")
+cat("PFER declarado:", sel_st$PFER, "\n")
+cat("maior probabilidade:", fmt(max(prob), 3), "em",
+    names(prob)[which.max(prob)], "\n")
+cat("preditores acima do corte:", sum(prob > sel_st$cutoff), "de", length(prob), "\n")
+```
+
+O preditor mais selecionado nao e nenhum dos de textura, e sim a chuva, que no
+cenario B foi gerada **independente** das demais. A selecao por estabilidade
+consegui ver exatamente o que o VIF apenas quantificou: a informacao que
+sobrescreve a redundancia e a que nao e redundante.
+
+```{r}
+#| label: 04-figura-estabilidade
+dados_est <- data.frame(preditor = names(prob), probabilidade = as.numeric(prob))
+ggplot(dados_est, aes(reorder(preditor, probabilidade), probabilidade,
+                      fill = probabilidade > sel_st$cutoff)) +
+  geom_hline(yintercept = sel_st$cutoff, linetype = "dashed", colour = VERM) +
+  geom_col(width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(values = c("FALSE" = CINZA, "TRUE" = VERDE), guide = "none") +
+  labs(x = NULL, y = "Probabilidade de selecao",
+       title = "Nenhum preditor sobrevive ao corte de estabilidade",
+       subtitle = paste("Linha tracejada: o corte do pacote,",
+                        fmt(sel_st$cutoff, 2),
+                        ". A chuva, gerada sem dependencia, e a mais estavel.")) +
+  tema_pacote()
+```
+
+## `mr_regularize()`: ridge nunca zera, lasso zera
+
+Aqui esta a distincao que importa entre os tres metodos de regularizacao, e
+ela e uma distincao de **comportamento observavel**, nao de nomenclatura.
+
+```{r}
+#| label: 04-regularize
+rg_ridge <- mr_regularize(fitB, method = "ridge", lambda = "1se")
+usar("mr_regularize", x = "mr_fit", method = "ridge", alpha = 0.5,
+     lambda = "1se", nfolds = 10, seed = 123)
+rg_lasso <- mr_regularize(fitB, method = "lasso", lambda = "1se")
+usar("mr_regularize", x = "mr_fit", method = "lasso", alpha = 0.5,
+     lambda = "1se", nfolds = 10, seed = 123)
+rg_en <- mr_regularize(fitB, method = "elastic_net", alpha = 0.5, lambda = "1se")
+usar("mr_regularize", x = "mr_fit", method = "elastic_net", alpha = 0.5,
+     lambda = "1se", nfolds = 3, seed = 123)
+nomes_coef <- function(z) rownames(z$coefficients)[-1]
+coef_reg <- function(z) as.numeric(z$coefficients)[-1]
+tab(data.frame(preditor = nomes_coef(rg_ridge),
+               MQO = fmt(coef(fitB$model)[-1], 5),
+               ridge = fmt(coef_reg(rg_ridge), 5),
+               ridge_zera = coef_reg(rg_ridge) == 0,
+               lasso = fmt(coef_reg(rg_lasso), 5),
+               lasso_zera = coef_reg(rg_lasso) == 0,
+               elastic_net = fmt(coef_reg(rg_en), 5),
+               en_zera = coef_reg(rg_en) == 0,
+               stringsAsFactors = FALSE),
+    caption = paste("Coeficientes do MQO e dos tres caminhos regularizados, no",
+                    "mesmo ajuste e na mesma regra de lambda. O ridge encolhe",
+                    "todos; o lasso e o elastic net zeram alguns."))
+```
+
+O ridge zera **nenhum** coeficiente, em nenhum preditor, com nenhuma das duas
+regras de lambda. Isso nao e acaso: a penalizacao do ridge e uma funcao suave
+do coeficiente, e o minimo da soma penalizada nunca cai sobre zero quando o
+termo esta no modelo. O lasso, cuja penalizacao tem quina em zero, zera.
+
+```{r}
+#| label: 04-ridge-lasso
+cat("ridge: coeficientes exatamente zero:",
+    sum(coef_reg(rg_ridge) == 0), "de", length(nomes_coef(rg_ridge)), "\n")
+cat("lasso: coeficientes exatamente zero:",
+    sum(coef_reg(rg_lasso) == 0), "de", length(nomes_coef(rg_lasso)), "\n")
+cat("elastic net: coeficientes exatamente zero:",
+    sum(coef_reg(rg_en) == 0), "de", length(nomes_coef(rg_en)), "\n")
+cat("lista `selected` do ridge:", length(rg_ridge$selected), "| do lasso:",
+    length(rg_lasso$selected), "\n")
+cat("lambda.min ridge:", fmt(rg_ridge$lambda_min, 5),
+    "| lambda.1se ridge:", fmt(rg_ridge$lambda_1se, 5), "\n")
+cat("alfa efetivo: ridge", rg_ridge$alpha, "| lasso", rg_lasso$alpha,
+    "| elastic_net", rg_en$alpha, "\n")
+rg_lasso_min <- mr_regularize(fitB, method = "lasso", lambda = "min")
+usar("mr_regularize", x = "mr_fit", method = "lasso", alpha = 0.5,
+     lambda = "min", nfolds = 10, seed = 123)
+cat("lasso com lambda = min: coeficientes zero:",
+    sum(coef_reg(rg_lasso_min) == 0), "| com lambda = 1se:",
+    sum(coef_reg(rg_lasso) == 0), "\n")
+```
+
+O objeto regularizado tem ainda uma curva de validacao cruzada com quatro
+colunas, e ela e o que permite escolher a regra de `lambda` sem chutar.
+
+```{r}
+#| label: 04-curva-cv
+cv <- rg_lasso$cv
+cv$faixa <- ifelse(cv$lambda >= rg_lasso$lambda_1se, "acima do 1se",
+                   ifelse(cv$lambda <= rg_lasso$lambda_min, "abaixo do min",
+                          "entre min e 1se"))
+cab <- data.frame(lambda = fmt(cv$lambda, 4),
+                  perda_media = fmt(cv$mean_loss, 4),
+                  erro_da_perda = fmt(cv$se_loss, 4),
+                  nao_nulos = cv$nzero,
+                  faixa = cv$faixa,
+                  stringsAsFactors = FALSE)
+tab(utils::head(cab, 8),
+    caption = paste("As primeiras oito linhas da curva de validacao cruzada",
+                    "devolvida pelo pacote. A coluna `faixa` classifica cada",
+                    "lambda em relacao aos dois cortes."))
+cat("linhas na curva:", nrow(cv), "| colunas:",
+    paste(utils::head(names(rg_lasso$cv), 4), collapse = ", "), "\n")
+cat("lambda nao nulos em toda a curva: de", min(cv$nzero), "a", max(cv$nzero), "\n")
+```
+
+## Os limites que o pacote impoe
+
+```{r}
+#| label: 04-limites
+erro_nfolds <- tryCatch(mr_regularize(fitB, method = "lasso", nfolds = 2),
+                        error = function(e) conditionMessage(e))
+erro_lambda <- tryCatch(mr_regularize(fitB, method = "lasso", lambda = "medio"),
+                        error = function(e) conditionMessage(e))
+erro_method <- tryCatch(mr_regularize(fitB, method = "elastic_net_ridge"),
+                        error = function(e) conditionMessage(e))
+usar("mr_regularize", x = "mr_fit", method = "lasso", alpha = 0.5,
+     lambda = "1se", nfolds = 2, seed = 123)
+tab(data.frame(chamada = c('mr_regularize(fitB, "lasso", nfolds = 2)',
+                           'mr_regularize(fitB, "lasso", lambda = "medio")',
+                           'mr_regularize(fitB, method = "nao_existe")'),
+               mensagem = c(erro_nfolds, erro_lambda, erro_method),
+               stringsAsFactors = FALSE),
+    caption = paste("Tres recusas. As duas ultimas vem de match.arg e listam as",
+                    "opcoes aceitas; a primeira vem do glmnet, e por isso a",
+                    "mensagem recomenda um valor concreto em vez de apenas",
+                    "recusar."))
+cat("nfolds = 3 e aceito:",
+    tryCatch({z <- mr_regularize(fitB, "lasso", nfolds = 3); "sim"},
+             error = function(e) conditionMessage(e)), "\n")
+parcial <- mr_regularize(fitB, method = "elastic")
+cat("method = 'elastic' (prefixo) foi aceito como:",
+    parcial$method, "| alfa efetivo:", parcial$alpha, "\n")
+```
+
+O limite de `nfolds` nao vem do pacote. Vem do `glmnet`, que exige mais de
+tres dobras, e o valor recomendado na mensagem e o proprio padrao da
+biblioteca. Isso importa para a leitura: nem toda mensagem de recusa deste
+capitulo e do `multiRegFlow`.
+
+A ultima linha do bloco merece atencao. `match.arg()` aceita correspondencia
+parcial, e por isso um metodo abreviado nao e recusado: ele e completado
+silenciosamente. O objeto devolvido carrega o nome completo, o que permite
+descobrir o que aconteceu, mas a chamada nao avisa.
+
+::: {.callout-note}
+## O argumento `...` em dois dos metodos esta inutilizavel
+
+`mr_select()` e `mr_regularize()` tem `...` na assinatura, mas em dois dos seis
+metodos de selecao o pacote ja preenche o argumento que se queria ajustar, e o
+`...` colide com ele. Em `best_subset` e `stability` a colisao e um erro
+imediato; em `lasso` e `elastic_net` o `...` chega intacto ao `glmnet`.
+:::
+
+```{r}
+#| label: 04-pontos
+dots_bs <- tryCatch(mr_select(fitB, method = "best_subset", nvmax = 4),
+                    error = function(e) conditionMessage(e))
+dots_bs2 <- tryCatch(mr_select(fitB, method = "best_subset", nbd = 2),
+                     error = function(e) conditionMessage(e))
+dots_st <- tryCatch(mr_select(fitB, method = "stability", PFER = 2),
+                    error = function(e) conditionMessage(e))
+dots_ok <- tryCatch({z <- mr_regularize(fitB, "lasso", nfolds = 5,
+                                        intercept = FALSE)
+                    "passa direto ao glmnet, sem colisao"},
+                    error = function(e) conditionMessage(e))
+usar("mr_select", x = "mr_fit", method = "best_subset", alpha = 0.5, keep = "NULL",
+     seed = 123, lambda = "1se", ... = "nvmax e nbd: colidem com o pacote")
+usar("mr_select", x = "mr_fit", method = "stability", alpha = 0.5, keep = "NULL",
+     seed = 123, lambda = "1se", ... = "PFER: colide com o pacote")
+usar("mr_regularize", x = "mr_fit", method = "lasso", alpha = 0.5,
+     lambda = "1se", nfolds = 10, seed = 123, ... = "intercept: chega ao glmnet")
+tab(data.frame(metodo = c("mr_select, best_subset, nvmax",
+                          "mr_select, best_subset, nbd",
+                          "mr_select, stability, PFER",
+                          "mr_regularize, lasso, intercept"),
+               resultado = c(dots_bs, dots_bs2, dots_st, dots_ok),
+               stringsAsFactors = FALSE),
+    caption = paste("Quatro tentativas de passar um argumento pelo `...`. As tres",
+                    "primeiras falham por argumento duplicado, e a ultima passa.",
+                    "E um achado de projeto do pacote, e nao um erro de uso."))
+```
+
+## A decisao: selecao por criterio ou regularizacao
+
+A pergunta que este capitulo tem de responder nao e "qual metodo eu prefiro".
+E "o que eu ganho, em previsao fora de amostra, trocando o modelo completo por
+um modelo selecionado". Isso tem uma unica resposta possivel, e ela e um numero
+de validacao cruzada repetida, nao uma preferencia.
+
+```{r}
+#| label: 04-validadores
+ajustar <- function(termos) {
+  f <- stats::reformulate(termos, response = "yield_t_ha")
+  mr_fit(f, B, goal = "prediction")
+}
+modelos <- list(
+  "modelo completo (o que AIC escolhe)" = fitB,
+  "modelo BIC" = fit_bic,
+  "modelo do caminho lasso" = ajustar(sel_las$selected),
+  "modelo do caminho ridge" = ajustar(nomes_coef(rg_ridge)))
+usar("mr_fit", formula = "reformulate(termos escolhidos)", data = "dados_B()",
+     goal = "prediction", engine = "ols", tau = 0.5)
+REPETICOES <- 5L; FOLDS <- 10L
+valid <- lapply(modelos, function(m)
+  mr_validate(m, v = FOLDS, repeats = REPETICOES, seed = 123))
+names(valid) <- names(modelos)
+usar("mr_validate", x = "mr_fit", v = 10, repeats = 5, seed = 123)
+res_pred <- do.call(rbind, lapply(seq_along(modelos), function(i) {
+  s <- valid[[i]]$summary
+  data.frame(modelo = names(modelos)[i],
+             n_pred = length(stats::coef(modelos[[i]]$model)) - 1L,
+             metrica = s$metric, media = s$mean, desvio = s$sd,
+             stringsAsFactors = FALSE)
+}))
+rownames(res_pred) <- NULL
+pega_met <- function(m, met) res_pred$media[res_pred$modelo == m & res_pred$metrica == met][1]
+pega_dp <- function(m, met) res_pred$desvio[res_pred$modelo == m & res_pred$metrica == met][1]
+```
+
+```{r}
+#| label: 04-tabela-validacao
+tab(data.frame(modelo = res_pred$modelo,
+               n_pred = res_pred$n_pred,
+               RMSE = fmt(vapply(res_pred$modelo, pega_met, numeric(1), met = "RMSE"), 4),
+               dp_RMSE = fmt(vapply(res_pred$modelo, pega_dp, numeric(1), met = "RMSE"), 4),
+               MAE = fmt(vapply(res_pred$modelo, pega_met, numeric(1), met = "MAE"), 4),
+               R2_fora = fmt(vapply(res_pred$modelo, pega_met, numeric(1), met = "R2"), 4),
+               inclinacao_cal = fmt(vapply(res_pred$modelo, pega_met, numeric(1),
+                                           met = "calibration_slope"), 4),
+               stringsAsFactors = FALSE),
+    caption = paste("Validacao cruzada repetida, com", paste(REPETICOES, collapse = ""),
+                    "repeticoes de", paste(FOLDS, collapse = ""),
+                    "dobras e a mesma semente nos quatro modelos. A coluna",
+                    "n_pred conta os preditores efetivamente usados."))
+```
+
+O RMSE e o criterio, porque e a unica metrica desta tabela que esta na mesma
+unidade da resposta. O resto acompanha.
+
+```{r}
+#| label: 04-decisao-calculos
+nome_completo <- "modelo completo (o que AIC escolhe)"
+rmse <- setNames(vapply(res_pred$modelo, pega_met, numeric(1), met = "RMSE"),
+                 res_pred$modelo)
+melhor <- names(rmse)[which.min(rmse)]
+pior <- names(rmse)[which.max(rmse)]
+ganho <- function(alvo) 100 * (rmse[[nome_completo]] - rmse[[alvo]]) / rmse[[nome_completo]]
+cat("politica de repeticao deste capitulo:", REPETICOES, "repeticoes de",
+    FOLDS, "dobras, com semente fixa\n")
+cat("melhor RMSE:", melhor, "=", fmt(rmse[[melhor]], 4), "\n")
+cat("pior   RMSE:", pior, "=", fmt(rmse[[pior]], 4), "\n")
+cat("BIC em relacao ao completo   :", fmt(ganho("modelo BIC"), 2), "%\n")
+cat("lasso em relacao ao completo :", fmt(ganho("modelo do caminho lasso"), 2), "%\n")
+cat("ridge em relacao ao completo :", fmt(ganho("modelo do caminho ridge"), 2), "%\n")
+cat("amplitude entre o pior e o melhor, em % do melhor:",
+    fmt(100 * (rmse[[pior]] - rmse[[melhor]]) / rmse[[melhor]], 2), "%\n")
+cat("o ridge mantem todos os preditores?", length(nomes_coef(rg_ridge)) == pB, "\n")
+```
+
+::: {.callout-important}
+## O que a tabela diz
+
+Nenhum dos tres caminhos melhora a previsao fora de amostra neste cenario. O
+modelo completo fica na frente; o caminho BIC perde por menos de meio por cento
+de RMSE, o caminho lasso perde por pouco mais de dois, e o caminho ridge fica
+exatamente empatado, porque o ridge mantem os sete preditores e portanto
+reproduz o mesmo modelo. A razao e a mesma que o @sec-colinear mostrou: no
+cenario B a informacao esta toda no mesmo lugar, e tirar preditor do grupo de
+textura nao tira informacao, apenas encurta o vetor.
+
+O que sobra e a regra pratica que este capitulo recomenda: **use `keep` para
+amarrar os termos que a ciencia exige, use o criterio para escolher entre os
+restantes, e so substitua o MQO por um caminho regularizado quando a previsao
+fora de amostra melhorar de forma mensuravel.** Neste cenario, ela nao melhora.
+:::
+
+```{r}
+#| label: fechar-04
+salvar_uso("04")
+salvar_decisoes("04",
+  paste("Manter o modelo completo do cenario B, usar `keep` para amarrar os",
+        "termos exigidos pela ciencia, e so trocar MQO por caminho regularizado",
+        "quando o RMSE fora de amostra melhorar de forma mensuravel."),
+  paste("AIC retem", length(sel_aic$selected), "dos", pB,
+        "termos e BIC retem", length(sel_bic$selected),
+        ", em conjuntos diferentes. Na validacao cruzada repetida com",
+        REPETICOES, "repeticoes de", FOLDS, "dobras, o RMSE do modelo completo e",
+        fmt(rmse[[nome_completo]], 4), ", contra", fmt(rmse[["modelo BIC"]], 4),
+        "do modelo BIC (", fmt(ganho("modelo BIC"), 2), "%),",
+        fmt(rmse[["modelo do caminho lasso"]], 4), "do caminho lasso (",
+        fmt(ganho("modelo do caminho lasso"), 2), "%) e",
+        fmt(rmse[["modelo do caminho ridge"]], 4), "do caminho ridge (",
+        fmt(ganho("modelo do caminho ridge"), 2), "%). Nenhuma selecao melhora a",
+        "previsao. O ridge zera", sum(coef_reg(rg_ridge) == 0), "de",
+        length(nomes_coef(rg_ridge)), "coeficientes e o lasso zera",
+        sum(coef_reg(rg_lasso) == 0), "; alem disso, o erro-padrao do CEC muda por",
+        "um fator de", fmt(se_c / se_b, 2), "entre os dois modelos, sem que",
+        "nenhuma observacao nova entre."))
+```

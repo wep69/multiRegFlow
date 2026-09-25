@@ -25,3 +25,10 @@ Thumbs.db
 # IDE specific
 .vscode/
 .idea/
+# build do livro
+tutorial/_book/
+tutorial/*_files/
+tutorial/.quarto/
+tutorial/_freeze/
+tutorial/**/figure-html/
+tutorial/**/figure-pdf/

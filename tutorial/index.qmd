@@ -1,0 +1,201 @@
+# Apresentacao {#sec-apresentacao}
+
+```{r}
+#| label: setup-index
+#| include: false
+source("_common.R")
+```
+
+Este livro e um tutorial auditado do pacote **multiRegFlow**, versao
+`r PKG_VER`, instalado em `` `r PKG_PATH` ``. A palavra auditado tem aqui um
+sentido restrito e verificavel: **nenhum comportamento descrito neste texto foi
+escrito a partir da documentacao ou da memoria**. Toda afirmacao sobre o que uma
+funcao faz veio de uma sondagem executada antes da redacao do capitulo, e todo
+numero que aparece na prosa e interpolado de um objeto calculado no render.
+
+O pacote exporta `r length(PKG_EXP)` funcoes publicas e `r length(PKG_S3)`
+metodos de classe. Todos aparecem na @sec-cobertura, com a proporcao de
+argumentos exercitados **calculada** pelo confronto entre o registro de uso
+gravado a cada bloco de codigo e a assinatura real de cada funcao, obtida de
+`formals()` no proprio render. Se um argumento deixar de ser exercitado, a
+tabela mostra zero nele, e o nome do que falta aparece ao lado. Nenhuma
+cobertura e afirmada.
+
+## O contrato do livro
+
+Sete regras sustentam o texto inteiro, e vale saber quais sao antes de comecar.
+
+1. Nenhum comportamento e descrito antes de ser executado.
+2. Nenhum numero e digitado no texto.
+3. A cobertura e calculada, nao afirmada.
+4. Uma realizacao ilustra; repeticoes concluem.
+5. Todo capitulo fecha com uma decisao e a evidencia numerica que a sustenta.
+6. Todo achado e atacado antes de virar texto.
+7. O livro entrega tambem um relatorio ao autor do pacote, em
+   `RELATORIO-AO-AUTOR.md`.
+
+A regra 6 e a que mais custa trabalho e a que mais rende. Duas vezes, ao longo
+deste estudo, a explicacao mais obvia para um comportamento estranho estava
+errada, e so um teste decisivo refutou as duas. Os dois casos estao na @sec-nota, e vale
+conhecer o metodo antes de confiar em qualquer achado sobre pacote alheio.
+
+## O principio que o pacote organiza
+
+O `multiRegFlow` separa duas coisas que a analise aplicada costuma misturar, e a
+separacao comeca antes de qualquer comando:
+
+- **explicacao e inferencia**: estimar associacoes condicionais e a
+  incerteza delas, sob um modelo cientificamente definido;
+- **predicao**: medir o quanto a resposta pode ser prevista para observacoes
+  que nao entraram no ajuste.
+
+A distincao nao e academica. Ela decide se a selecao automatica entra no texto
+como descoberta ou como exploracao, e decide se o numero que se relata e o
+erro-padrao do modelo ou o erro de previsao fora de amostra. O pacote registra
+a intencao no proprio ajuste, pelo argumento `goal`, e essa intencao depois
+muda o que `mr_recommend()` recomenda e o que `mr_report()` imprime.
+
+```{r}
+#| label: contrato-goal
+soil_pkg <- mr_example_data("soil_fertility")
+fit_expl <- mr_fit(yield_t_ha ~ soil_pH + organic_matter_pct +
+                     available_P_mg_dm3 + season_rain_mm,
+                   soil_pkg, goal = "explanation")
+fit_pred <- mr_fit(yield_t_ha ~ soil_pH + organic_matter_pct +
+                     available_P_mg_dm3 + season_rain_mm,
+                   soil_pkg, goal = "prediction")
+usar("mr_fit", formula = "yield_t_ha ~ 4 preditores", data = "mr_example_data('soil_fertility')",
+     goal = "explanation", engine = "ols", tau = 0.5)
+cat("goal registrado no objeto:", fit_expl$goal, "|", fit_pred$goal, "\n")
+```
+
+A diferenca entre os dois objetos e apenas o campo `goal`. Ela nao muda o
+ajuste. Muda o que o pacote recomenda em seguida.
+
+```{r}
+#| label: contrato-goal-recomendacao
+rec_expl <- mr_recommend(fit_expl)
+rec_pred <- mr_recommend(fit_pred)
+usar("mr_recommend", x = "mr_fit")
+cat("dominios com goal = explicacao:", nrow(rec_expl), "\n")
+cat("dominios com goal = predicao  :", nrow(rec_pred), "\n")
+cat("so no ajuste de predicao      :",
+    paste(setdiff(rec_pred$domain, rec_expl$domain), collapse = ", "), "\n")
+cat("so no ajuste de explicacao    :",
+    paste(setdiff(rec_expl$domain, rec_pred$domain), collapse = ", "), "\n")
+tab(rec_expl[, c("domain", "finding", "priority")],
+    caption = "goal = explicacao: o pacote pede que a selecao seja tratada como exploratoria.")
+tab(rec_pred[, c("domain", "finding", "priority")],
+    caption = "goal = predicao: o pacote pede validacao fora de amostra, e nao fala de selecao.")
+```
+
+## Os seis cenarios e o motivo de cada um
+
+Um unico conjunto de dados nao forca todos os comportamentos que valem ser
+vistos. Uma resposta bem comportada nunca exercita um caminho de robustez, e
+niveis igualmente espacados nunca revelam um erro de escores. Por isso o livro
+usa seis cenarios simulados, cada um com um discrepancia plantada por
+construcao, e cada discrepancia existe por um motivo declarado.
+
+Todos os dados sao **sinteticos**, gerados com semente fixa dentro deste
+documento. Nenhum deles e observacao de campo, e nenhum deles pode ser
+apresentado como tal.
+
+```{r}
+#| label: mapa-cenarios
+tab(tabela_cenarios(), caption = paste(
+  "Os seis cenarios. A coluna 'discrepancia' diz o que foi plantado de proposito;",
+  "a coluna 'exercita' diz qual parte da API aquele planted case foi criado",
+  "para exercitar."))
+```
+
+O capitulo @sec-dados detalha cada um, mostra a forma do efeito e a verdade
+plantada, e faz a verificacao de que a discrepancia realmente existe nos dados
+antes de usar o cenario para demonstrar nada.
+
+## Mapa dos modulos
+
+As `r length(PKG_EXP)` funcoes nao formam um catalogo alfabetico neste livro.
+Elas formam sete modulos funcionais, e o mapa abaixo diz onde cada uma e
+discutida.
+
+```{r}
+#| label: mapa-modulos
+mapa <- data.frame(
+  modulo = c("Ajuste e diagnostico", "Colinearidade e inferencia",
+             "Selecao e regularizacao", "Reamostragem",
+             "Importancia e efeitos", "Motores flexiveis",
+             "Validacao e comparacao",
+             "Dados e capacidades do pacote"),
+  funcoes = c("mr_fit, mr_diagnose, mr_influence, mr_recommend",
+              "mr_collinearity, mr_inference",
+              "mr_select, mr_regularize",
+              "mr_bootstrap",
+              "mr_importance, mr_effects",
+              "mr_quantile, mr_kernel",
+              "mr_validate, mr_compare, mr_report",
+              "mr_capabilities, mr_example_data"),
+  capitulo = c("@sec-ajuste", "@sec-colinear", "@sec-selecao", "@sec-bootstrap",
+               "@sec-importancia", "@sec-flexiveis", "@sec-validacao",
+               "@sec-relatorio"),
+  stringsAsFactors = FALSE)
+tab(mapa, caption = "Mapa dos modulos: onde cada funcao e discutida.")
+```
+
+## O que este livro nao faz
+
+Sao tres as omissoes, e todas deliberadas.
+
+1. **Nao ha vinheta nova.** O pacote ja traz treze vinhetas em ingles. Este
+   livro nao as substitui: ele as audita, e a @sec-nota lista o que foi
+   encontrado nelas.
+2. **Nao ha taxa de deteccao por Monte Carlo** para os motores flexiveis. O
+   pacote delega a `mgcv`, `np`, `robustbase` e `quantreg`, e afirmar sobre
+   esses motores seria afirmar sobre o pacote deles, nao sobre o
+   `multiRegFlow`. Onde o livro fala de desempenho preditivo, o numero vem de
+   repeticao cruzada no proprio cenario, e a politica de repeticao esta
+   declarada em cada capitulo.
+3. **Nao ha receita de manejo.** Os cenarios servem para mostrar
+   comportamento de metodo, nao para recomendar adubacao ou irrigacao. A
+   @sec-crista quantifica uma perda de produtividade apenas para mostrar que
+   a perda e mensuravel, e nao como prescricao.
+
+## Como este livro foi verificado
+
+A verificacao e parte do produto, nao um passo final. Cada afirmacao sobre
+comportamento foi produzida por um script descartavel que chamou a funcao com o
+argumento em valor nao padrao,involveu a chamada em captura de erro e de aviso,
+e despejou a saida em arquivo antes de qualquer redacao. A regra aplicada em
+todos os capitulos foi: **uma realizacao ilustra, N realizacoes concluem**. As
+afirmacoes de potencia e de taxa de acerto, quando aparecem, vem de repeticao
+com semente propria por repeticao, e a politica esta escrita no texto.
+
+Para o leitor que quer o indice bruto do que foi medido, e nao a leitura
+didatica, o capitulo @sec-cobertura traz a tabela de cobertura calculada, o
+capitulo @sec-nota traz os comportamentos que divergiram do prometido, e o
+`RELATORIO-AO-AUTOR.md` traz o mesmo material organizado por severidade, com a
+correcao sugerida em codigo.
+
+::: {.callout-important}
+## Se voce lembra de uma coisa so
+
+Ler a coluna `clusters` de `mr_inference()` e conferir `n` em `mr_diagnose()`
+custam segundos e evitam as duas leituras erradas mais comuns em analise
+aplicada: inferir de um intervalo que nao foi corrigido, e aceitar um teste que
+nao viu o que voce sabe que esta no dado. Os capitulos @sec-ajuste e
+@sec-colinear medem as duas situacoes.
+:::
+
+```{r}
+#| label: fechar-index
+usar("mr_example_data", name = "soil_fertility")
+usar("mr_recommend", x = "mr_fit")
+salvar_uso("index")
+salvar_decisoes("index",
+  "Declarar `goal` no ajuste, e nao escolher o criterio depois.",
+  paste("O mesmo ajuste com `goal = 'prediction'` produz a recomendacao de",
+        "validacao fora de amostra; com `goal = 'explanation'` produz a de",
+        "selecao exploratoria. A tabela acima mostra as duas linhas."))
+```
+
+

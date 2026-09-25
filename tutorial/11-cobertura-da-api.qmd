@@ -1,0 +1,196 @@
+# Cobertura da API, calculada {#sec-cobertura}
+
+```{r}
+#| label: setup-11
+#| include: false
+source("_common.R")
+```
+
+Este capitulo e o indice bruto do livro. Nao ha aula aqui: ha uma tabela
+calculada, o registro de uso que a produziu, e a discussao do que a tabela
+**nao** cobre.
+
+A cobertura deste livro nao e afirmada. Ela e o resultado de um confronto
+feito no proprio render, entre duas fontes independentes:
+
+1. a **assinatura real** de cada funcao exportada, obtida de `formals()` dentro
+   do pacote instalado;
+2. o **registro de uso**, gravado a cada bloco de codigo deste livro pela
+   funcao `usar()`, que anota o nome da funcao e os argumentos efetivamente
+   passados.
+
+Se um argumento deixar de ser exercitado em qualquer capitulo, a celula dele
+fica em zero e o nome aparece na coluna `faltando`. Se um argumento novo for
+adicionado ao pacote, a linha dele aparece com zero, e o livro passa a acusar
+a propria lacuna.
+
+```{r}
+#| label: cobertura-tabela
+cob <- cobertura()
+cob$pct <- round(cob$pct, 1)
+tab(data.frame(funcao = cob$funcao,
+               n_argumentos = cob$n_argumentos,
+               exercitados = cob$exercitados,
+               pct_cobertura = paste0(cob$pct, "%"),
+               faltando = cob$faltando,
+               stringsAsFactors = FALSE),
+    caption = paste("Cobertura de argumentos por funcao, calculada no render.",
+                    "Funcoes sem argumento aparecem com zero por construcao,",
+                    "e nao por lacuna."))
+```
+
+```{r}
+#| label: cobertura-resumo
+com_args <- cob$exercitados > 0
+total_arg <- sum(cob$n_argumentos)
+total_ex  <- sum(cob$exercitados[cob$n_argumentos > 0])
+cat("funcoes exportadas                       :", nrow(cob), "\n")
+cat("funcoes com pelo menos um argumento      :", sum(cob$n_argumentos > 0), "\n")
+cat("funcoes cobertas integralmente           :",
+    sum(cob$n_argumentos > 0 & cob$pct == 100), "\n")
+cat("funcoes com cobertura parcial            :",
+    sum(cob$n_argumentos > 0 & cob$pct > 0 & cob$pct < 100), "\n")
+cat("funcoes com cobertura zero               :",
+    sum(cob$n_argumentos > 0 & cob$pct == 0), "\n")
+cat("argumentos exercitados / exercitaveis    :", total_ex, "/", total_arg, "\n")
+cat("percentual global                        :",
+    fmt(100 * total_ex / total_arg, 1), "%\n")
+```
+
+O percentual global e a soma dos argumentos exercitados dividida pela soma dos
+argumentos existentes. Ele e o numero que este livro assume publicamente, e ele
+sobe ou desce conforme o livro cresce.
+
+## Os metodos S3
+
+As funcoes exportadas nao sao a API inteira. O pacote registra nove metodos de
+classe, que o `NAMESPACE` declara e que a documentacao do pacote nao lista como
+se fossem funcoes.
+
+```{r}
+#| label: metodos-s3
+tab(data.frame(metodo = PKG_S3, stringsAsFactors = FALSE),
+    caption = paste("Os metodos S3 registrados no namespace, obtidos por",
+                    "ls(asNamespace()), e nao por methods(), que so os",
+                    "mostra depois que o generico esta anexado."))
+```
+
+Estes metodos sao o que o usuario chama sem pensar no nome completo:
+`print()`, `summary()`, `coef()`, `predict()` e `plot()` sobre um objeto
+`mr_fit`, `mr_selection`, `mr_regularization`, `mr_quantile` e `mr_kernel`.
+O livro os exercita em quase todos os capitulos, e o registro de uso nao os
+conta como argumentos de funcao exportada, porque nao sao argumentos: sao
+metodos.
+
+```{r}
+#| label: metodos-exercicio
+## exercicio explicito dos metodos, para deixar a cobertura visivel
+A <- dados_A()
+fit_show <- mr_fit(FORM_A, A)
+sel_show <- mr_select(mr_fit(yield_t_ha ~ ., dados_B()), "bic")
+reg_show <- mr_regularize(mr_fit(yield_t_ha ~ ., dados_B()), "lasso",
+                          nfolds = 5, seed = 1)
+C_show <- dados_C()
+q_show  <- mr_quantile(mr_fit(yield_t_ha ~ irrigation_mm + mean_temp_C, C_show),
+                       tau = 0.5)
+k_show  <- mr_kernel(mr_fit(yield_t_ha ~ irrigation_mm + mean_temp_C, C_show))
+objetos <- list(fit = fit_show, selection = sel_show, regularizacao = reg_show,
+                quantil = q_show, kernel = k_show)
+for (nm in names(objetos)) {
+  o <- objetos[[nm]]
+  cat("\n== ", nm, " | classe: ", paste(class(o), collapse = "/"), "\n", sep = "")
+  cat("   metodo print existe:",
+      !is.null(utils::getS3method(sub("^mr_", "print.", class(o)[1]),
+                                  class(o)[1], optional = TRUE)), "\n")
+  cat("   str de nivel 1:",
+      paste(names(o), collapse = ", "), "\n")
+}
+```
+
+## O registro de uso, linha a linha
+
+O registro completo esta gravado em `_artefatos/uso-*.rds`, um arquivo por
+capitulo. Ele e a evidencia de que a cobertura acima nao foi digitada: cada
+linha corresponde a uma chamada real feita durante o render deste livro.
+
+```{r}
+#| label: registro-uso
+arquivos <- list.files(ART, pattern = "^uso-.*\\.rds$", full.names = TRUE)
+registro <- if (length(arquivos) == 0L) {
+  data.frame(capitulo = character(0), funcao = character(0),
+             argumento = character(0), valor = character(0))
+} else {
+  do.call(rbind, lapply(arquivos, readRDS))
+}
+cat("arquivos de registro:", length(arquivos), "\n")
+cat("linhas de registro  :", nrow(registro), "\n")
+cat("capitulos com registro:", length(unique(registro$capitulo)), "\n")
+```
+
+```{r}
+#| label: registro-por-capitulo
+por_cap <- as.data.frame(table(capitulo = registro$capitulo),
+                         stringsAsFactors = FALSE)
+names(por_cap)[2] <- "chamadas_registradas"
+por_cap <- por_cap[por_cap$chamadas_registradas > 0, ]
+tab(por_cap, caption = paste(
+  "Chamadas registradas por capitulo. Um capitulo com zero linha nesta",
+  "tabula nao exercitou nenhuma funcao do pacote, e por isso nao",
+  "aparece nela."))
+```
+
+```{r}
+#| label: registro-por-funcao
+por_fun <- as.data.frame(table(funcao = registro$funcao),
+                         stringsAsFactors = FALSE)
+names(por_fun)[2] <- "chamadas_registradas"
+por_fun <- por_fun[order(-por_fun$chamadas_registradas), ]
+tab(por_fun, caption = paste(
+  "Chamadas registradas por funcao exportada. As funcoes ausentes desta",
+  "tabela tem zero linha porque nenhuma chamada nominal foi registrada,",
+  "e nao porque nao funcionam: ver a tabela de cobertura, que se baseia em",
+  "formals() e nao no registro."))
+```
+
+## O que a cobertura nao cobre, e por que
+
+Uma tabela de cobertura que so olha argumentos tem tres lacunas conhecidas, e
+vale nomear as tres em vez de deixar o leitor supor que a tabela e completa.
+
+**Primeira: valores de argumento, nao apenas presenca.** A tabela diz que
+`type = "wild"` foi exercitado. Nao diz que o valor exercitado produz um
+intervalo diferente de `type = "pairs"`. Esse tipo de afirmacao exige a
+comparacao de resultados, e ela aparece nos capitulos 3 a 8, nao aqui.
+
+**Segunda: metodos S3 nao sao argumentos.** Os nove metodos do pacote aparecem
+na secao anterior, mas nao entram no denominador da cobertura global, porque
+nao possuem `formals()` proprio compativel com o registro.
+
+**Terceira: a co-bertura e deste livro, nao do pacote.** Um argumento marcado
+como exercitado foi exercitado **por este tutorial**, com o cenario deste
+tutorial. Isso nao garante que o argumento se comporte como o texto do livro
+afirma em outro cenario, e nao mede a robustez do pacote sob entradas
+adversas. A @sec-nota registra o que foi observado fora do escopo deste
+livro.
+
+::: {.callout-note}
+## Como forcar o recalculo
+
+O cache dos blocos esta em `_artefatos/cache-*.rds`, indexado pelo codigo do
+bloco e pelas dependencias declaradas. Mudar um numero na semente muda o
+assinatura e descarta o cache correspondente sozinho. Para forcar tudo, apague
+o conteudo de `_artefatos/` e renderize de novo: o custo e de alguns minutos.
+:::
+
+```{r}
+#| label: fechar-11
+salvar_uso("11")
+salvar_decisoes("11",
+  paste("Publicar a cobertura como tabela calculada, e nao como numero",
+        "afirmado no texto."),
+  paste("A tabela deste capitulo e o confronto, feito no render, entre",
+        "formals() das", nrow(cob), "funcoes exportadas e o registro de uso",
+        "gravado pelos", nrow(registro), "chamadas feitas neste livro.",
+        "Percentual global neste render:",
+        fmt(100 * total_ex / total_arg, 1), "% dos", total_arg, "argumentos."))
+```

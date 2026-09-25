@@ -1,0 +1,74 @@
+project:
+  type: book
+  output-dir: _book
+
+book:
+  title: "multiRegFlow na pratica"
+  subtitle: "Um tutorial auditado de regressao multipla em agroensayo, com dados discrepantes simulados"
+  author: "Auditoria executada por Walter Pereira com multiRegFlow 0.2.0"
+  date: today
+  date-format: "DD/MM/YYYY"
+  chapters:
+    - index.qmd
+    - 01-dados-e-verdade-plantada.qmd
+    - 02-ajuste-e-diagnostico.qmd
+    - 03-colinearidade-e-inferencia.qmd
+    - 04-selecao-e-regularizacao.qmd
+    - 05-reamostragem.qmd
+    - 06-importancia-e-efeitos.qmd
+    - 07-motores-flexiveis.qmd
+    - 08-validacao-e-comparacao.qmd
+    - 09-relatorio-e-auditoria.qmd
+    - 10-crista-e-otimo-condicional.qmd
+    - 11-cobertura-da-api.qmd
+    - 99-nota-tecnica.qmd
+
+lang: pt
+language:
+  crossref-sec-title: "Secao"
+  crossref-cha-title: "Capitulo"
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: show
+    code-overflow: wrap
+    code-summary: "Mostrar o codigo"
+    embed-resources: true
+    df-print: default
+    fig-width: 8
+    fig-height: 4.6
+    fig-dpi: 150
+    tbl-cap-location: top
+    link-external-newwindow: true
+  pdf:
+    documentclass: scrreprt
+    papersize: a4
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    number-depth: 2
+    keep-tex: false
+    fig-width: 6.5
+    fig-height: 4.2
+    fontsize: 10pt
+    geometry:
+      - margin=2.2cm
+    colorlinks: true
+
+execute:
+  echo: true
+  warning: false
+  message: false
+  freeze: false
+
+knitr:
+  opts_chunk:
+    collapse: true
+    comment: "#>"
+    fig.align: "center"
+
+

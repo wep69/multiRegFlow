@@ -1,0 +1,603 @@
+# Motores flexiveis {#sec-flexiveis}
+
+```{r}
+#| label: c07-setup
+#| include: false
+source("_common.R")
+C07 <- dados_C()
+FORM_C07 <- yield_t_ha ~ N_rate_kg_ha + irrigation_mm + mean_temp_C
+FORM_GAM07 <- yield_t_ha ~ N_rate_kg_ha + s(irrigation_mm) + mean_temp_C
+```
+
+O cenario C e o unico do livro em que a resposta tem uma **cresta** e nao um
+plano. O otimo de irrigacao sobe com a dose de nitrogenio, e nenhuma analise
+univariada de irrigacao ve isso: a inclinacao media da irrigacao, calculada sem
+controlar o nitrogenio, descreve a media de um gradiente que nao existe em
+nenhum ponto especifico do campo. Este capitulo mede quanto custa, em tempo e
+em previsao, escolher o motor certo para esse tipo de problema.
+
+O pacote expoe cinco motores em `mr_fit()` e dois caminhos alternativos,
+`mr_quantile()` e `mr_kernel()`. Os dois caminhos nao sao atalhos: tem estrutura
+de retorno diferente, e essa diferenca e a primeira coisa que quebra o exemplo
+de quem esta seguindo o manual por copia e cola.
+
+## Os cinco motores, um a um
+
+Todos os cinco sao exercitados aqui, no mesmo cenario e com a mesma formula
+linear de partida, para que a comparacao seja sobre o motor e nao sobre o
+modelo.
+
+```{r}
+#| label: c07-cinco-motores
+fit_ols07 <- mr_fit(FORM_C07, C07, engine = "ols", goal = "explanation")
+fit_rob07 <- suppressWarnings(mr_fit(FORM_C07, C07, engine = "robust",
+                                     goal = "explanation"))
+fit_q507 <- mr_fit(FORM_C07, C07, engine = "quantile", tau = 0.5,
+                   goal = "explanation")
+fit_ker07 <- mr_fit(FORM_C07, C07, engine = "kernel", goal = "explanation")
+fit_gam07 <- mr_fit(FORM_GAM07, C07, engine = "gam", goal = "explanation")
+usar("mr_fit", formula = "FORM_C", data = "dados_C()", goal = "explanation",
+     engine = "ols", tau = 0.5)
+usar("mr_fit", formula = "FORM_C", data = "dados_C()", goal = "explanation",
+     engine = "robust", tau = 0.5)
+usar("mr_fit", formula = "FORM_C", data = "dados_C()", goal = "explanation",
+     engine = "quantile", tau = 0.5)
+usar("mr_fit", formula = "FORM_C", data = "dados_C()", goal = "explanation",
+     engine = "kernel", tau = 0.5)
+usar("mr_fit", formula = "FORM_C com s(irrigation_mm)", data = "dados_C()",
+     goal = "explanation", engine = "gam", tau = 0.5)
+
+tab(data.frame(
+  engine = c("ols", "robust", "quantile", "kernel", "gam"),
+  pacote = c("stats", "robustbase", "quantreg", "np", "mgcv"),
+  classe_do_backend = c(paste(class(fit_ols07$model), collapse = "/"),
+                        paste(class(fit_rob07$model), collapse = "/"),
+                        paste(class(fit_q507$model), collapse = "/"),
+                        paste(class(fit_ker07$model), collapse = "/"),
+                        paste(class(fit_gam07$model), collapse = "/")),
+  n = c(fit_ols07$n, fit_rob07$n, fit_q507$n, fit_ker07$n, fit_gam07$n),
+  n_parametros = c(length(coef(fit_ols07$model)),
+                   length(coef(fit_rob07$model)),
+                   length(coef(fit_q507$model)),
+                   length(coef(fit_ker07$model)),
+                   length(coef(fit_gam07$model))),
+  stringsAsFactors = FALSE),
+  caption = paste(
+    "Os cinco motores. Todos devolvem o mesmo objeto mr_fit de onze campos, e",
+    "diferem apenas no que esta em $model. O contador de parametros e a",
+    "primeira pista de que o gam e de outra natureza: ele tem muito mais",
+    "coeficientes do que preditores."))
+```
+
+Dois campos desse objeto confundem leitura. O campo `$predictors` traz os nomes
+dos termos do modelo ajustado, e no `gam` a suave entra como um termo so,
+porque e assim que o modelo interno a nomeia. E o campo `$tau` existe nos cinco
+motores, com o mesmo valor padrao, mesmo no `ols`, onde nao tem uso nenhum.
+
+```{r}
+#| label: c07-campos-confusos
+tab(data.frame(
+  objeto = c("mr_fit com motor ols", "mr_fit com motor gam"),
+  campo_tau = c(fit_ols07$tau, fit_gam07$tau),
+  campo_engine = c(fit_ols07$engine, fit_gam07$engine),
+  campo_predictors = c(paste(fit_ols07$predictors, collapse = " + "),
+                       paste(fit_gam07$predictors, collapse = " + ")),
+  stringsAsFactors = FALSE),
+  caption = paste(
+    "Os campos que confundem. O $tau vale o mesmo em todos os motores: o que",
+    "diz qual motor foi usado e $engine, nunca $tau."))
+cat("a formula escrita no gam foi:\n  ", deparse(FORM_GAM07), "\n")
+cat("os termos que $predictors devolve sao:\n  ",
+    paste(fit_gam07$predictors, collapse = " + "), "\n")
+```
+
+## O motor `gam` injeta as funcoes de suave na formula
+
+Este e o motivo de o motor `gam` ser o mais confortavel de usar no pacote, e
+vale mostrar funcionando. Nao e preciso carregar o `mgcv` no ambiente, nao e
+preciso escrever `mgcv::s()` na formula, e nao e preciso construir o modelo
+fora do pacote. A funcao `mr_fit()` cria um ambiente proprio, coloca `s`, `te`,
+`ti` e `t2` dentro dele, e aponta a formula para esse ambiente antes de chamar
+`mgcv::gam()`.
+
+```{r}
+#| label: c07-gam-injecao
+cat("mgcv esta carregado no ambiente global?",
+    "mgcv" %in% loadedNamespaces(), "\n")
+cat("existe s() no ambiente global?      ",
+    exists("s", envir = globalenv(), inherits = FALSE), "\n\n")
+cat("e ainda assim a formula com s() foi resolvida:\n  ",
+    deparse(fit_gam07$formula), "\n")
+cat("suaves do modelo ajustado:", length(fit_gam07$model$smooth), "\n")
+cat("rotulo da suave          :", fit_gam07$model$smooth[[1]]$label, "\n")
+cat("base de regressao usada  :", fit_gam07$model$smooth[[1]]$bs, "\n")
+```
+
+As quatro funcoes injetadas respondem por si so, e os argumentos usuais da suave
+tambem. Vale exercitar todos, porque a falta de `te` e `ti` so apareceria na
+hora de montar o modelo interativo, e nao na hora de escrever o texto.
+
+```{r}
+#| label: c07-gam-quatro-suaves
+FORMAS07 <- list(
+  s_simples    = yield_t_ha ~ N_rate_kg_ha + s(irrigation_mm) + mean_temp_C,
+  s_interativa = yield_t_ha ~ N_rate_kg_ha + s(irrigation_mm, by = N_rate_kg_ha),
+  s_curva      = yield_t_ha ~ N_rate_kg_ha + s(irrigation_mm, bs = "cc") + mean_temp_C,
+  s_curta      = yield_t_ha ~ N_rate_kg_ha + s(irrigation_mm, k = 5) + mean_temp_C,
+  te_tensor    = yield_t_ha ~ N_rate_kg_ha + te(irrigation_mm, mean_temp_C),
+  ti_tensor    = yield_t_ha ~ N_rate_kg_ha + ti(irrigation_mm) + mean_temp_C,
+  t2_tensor2   = yield_t_ha ~ N_rate_kg_ha + t2(irrigation_mm) + mean_temp_C)
+linhas07 <- do.call(rbind, lapply(names(FORMAS07), function(nm) {
+  fit <- tryCatch(suppressWarnings(mr_fit(FORMAS07[[nm]], C07, engine = "gam")),
+                  error = function(e) NULL)
+  data.frame(forma = nm,
+             n_suaves = if (is.null(fit)) NA_integer_ else length(fit$model$smooth),
+             edf_total = if (is.null(fit)) NA_real_ else round(sum(fit$model$edf), 3),
+             n_parametros = if (is.null(fit)) NA_integer_ else length(coef(fit$model)),
+             resolvida = !is.null(fit),
+             stringsAsFactors = FALSE)
+}))
+tab(linhas07, caption = paste(
+  "As sete formas de suave, todas resolvidas sem carregar o mgcv no ambiente",
+  "de quem escreve. O numero de coeficientes e o numero de bases, e nao o",
+  "numero de preditores: e por isso que o AIC do gam nao e comparavel ao do",
+  "ols, como o capitulo de validacao mostra."))
+```
+
+O que o gam ganha em flexibilidade, ganha em parametro. O numero efetivo de
+graus de liberdade e a medida honesta do que ele usou de fato, e ela e sempre
+menor que o numero de coeficientes ajustados.
+
+```{r}
+#| label: c07-gam-edf
+edf07 <- data.frame(termo = names(fit_gam07$model$edf),
+                    edf = round(fit_gam07$model$edf, 4),
+                    stringsAsFactors = FALSE)
+edf_total07 <- sum(fit_gam07$model$edf)
+tab(edf07, caption = paste(
+  "Graus de liberdade efetivos do gam, termo a termo. O intercepto e os dois",
+  "preditores lineares gastam um cada; o resto vai para a suave."))
+cat("soma dos graus de liberdade efetivos  :", fmt(edf_total07, 4), "\n")
+cat("numero de coeficientes ajustados   :", length(coef(fit_gam07$model)), "\n")
+cat("numero de observacoes              :", fit_gam07$n, "\n")
+cat("parametros por observacao, no gam  :",
+    fmt(length(coef(fit_gam07$model)) / fit_gam07$n, 4), "\n")
+cat("parametros por observacao, no ols  :",
+    fmt(length(coef(fit_ols07$model)) / fit_ols07$n, 4), "\n")
+```
+
+::: {.callout-note}
+## Onde a armadilha do gam aparece
+Uma suave que interpola demais tambem tem custo, e o pacote nao escolhe por
+voce. O criterio de suavidade nao esta em nenhum campo do objeto `mr_fit`: ele
+esta dentro de `$model`, e quem quiser o grafico tem de pedir ao `mgcv`
+diretamente. Conferir a soma dos graus de liberdade efetivos antes de aceitar a
+suave e o caminho curto.
+:::
+
+## `mr_quantile`: estrutura diferente de `mr_fit`
+
+Aqui esta a quebra que o manual nao avisa. `mr_quantile()` **nao devolve um
+objeto `mr_fit`**. Devolve uma lista de quatro campos, e o acesso aos
+coeficientes tem um nivel a mais.
+
+```{r}
+#| label: c07-mr-quantile-estrutura
+q507 <- mr_quantile(fit_q507, tau = 0.5)
+usar("mr_quantile", x = "mr_fit", tau = "c(0.1, 0.25, 0.5, 0.75, 0.9)")
+cat("classe devolvida         :", paste(class(q507), collapse = ", "), "\n")
+cat("campos de primeiro nivel :", paste(names(q507), collapse = ", "), "\n")
+cat("numero de campos         :", length(q507), "\n")
+cat("tem $coefficients no 1o nivel?", "coefficients" %in% names(q507), "\n")
+cat("mr_fit tem no 1o nivel  :", paste(names(as.list(fit_q507)), collapse = ", "), "\n")
+```
+
+O acesso errado nao da erro: devolve `NULL`. E um livro que usa o acesso errado
+ainda renderiza, com a string "NA" no lugar do numero, e essa e a pior
+propriedade possivel para um tutorial.
+
+```{r}
+#| label: c07-acesso-errado
+cat("--- acesso que se escreve por costume ---\n")
+cat("q507$coefficients               e NULL?", is.null(q507$coefficients), "\n")
+cat("q507$coefficients$irrigation_mm e NULL?",
+    is.null(q507$coefficients$irrigation_mm), "\n")
+cat("o que um texto escrito assim imprimiria:",
+    fmt(q507$coefficients$irrigation_mm, 4), "\n\n")
+cat("--- acesso correto ---\n")
+cat("q507$model$coefficients e um vetor?",
+    is.null(dim(q507$model$coefficients)), "\n")
+cat("q507$model$coefficients e nomeado?",
+    !is.null(names(q507$model$coefficients)), "\n")
+str(q507$model$coefficients)
+cat("q507$model$coefficients para a irrigacao:",
+    fmt(q507$model$coefficients[["irrigation_mm"]], 6), "\n")
+```
+
+A forma do objeto coeficientes **depende do numero de quantis pedidos**, e essa
+e a segunda metade da armadilha. Com um quantil so, o objeto e um vetor nomeado.
+Com a grade padrao, e uma matriz, com uma coluna por quantil.
+
+```{r}
+#| label: c07-coeficientes-matriz
+GRADE07 <- c(0.1, 0.25, 0.5, 0.75, 0.9)
+q_grade07 <- mr_quantile(fit_q507, tau = GRADE07)
+cat("um quantil -> classe:", class(q507$model$coefficients),
+    "| dim:", paste(dim(q507$model$coefficients), collapse = "x"), "\n")
+cat("a grade    -> classe:", class(q_grade07$model$coefficients),
+    "| dim:", paste(dim(q_grade07$model$coefficients), collapse = "x"), "\n")
+cat("nomes das linhas :", paste(rownames(q_grade07$model$coefficients),
+                                 collapse = ", "), "\n")
+cat("nomes das colunas:", paste(colnames(q_grade07$model$coefficients),
+                                collapse = ", "), "\n\n")
+tab(round(t(q_grade07$model$coefficients), 5),
+    caption = paste("Os coeficientes do cenario C nos cinco quantis da grade.",
+                    "A mudanca mais visivel esta no intercepto, que e o piso da",
+                    "superficie nos quantis baixos e o teto nos quantis altos."))
+```
+
+O vetor de quantis vem dentro do proprio objeto, no campo `$tau`. Quem le
+`fit_q507$tau` depois de chamar `mr_quantile()` com a grade esta lendo o
+quantil unico com que o `mr_fit` foi construido, e nao a grade efetivamente
+ajustada. Sao dois numeros diferentes, com o mesmo nome, em objetos diferentes.
+
+```{r}
+#| label: c07-campos-quantile
+tab(data.frame(
+  campo = c("model", "tau", "formula", "data"),
+  o_que_e = c("o objeto do quantreg, classe rq",
+              "os quantis efetivamente ajustados",
+              "a formula, a mesma do mr_fit de origem",
+              "a tabela inteira, a mesma do mr_fit de origem"),
+  onde_entra_o_erro = c("os coeficientes vivem aqui, e nao no primeiro nivel",
+                       "tem o mesmo nome do $tau do mr_fit, com outro conteudo",
+                       "e a mesma, caractere a caractere",
+                       "e o que permite prever sem reapresentar os dados"),
+  stringsAsFactors = FALSE),
+  caption = "Os quatro campos de mr_quantile().")
+cat("$tau do mr_fit de origem        :", fit_q507$tau, "\n")
+cat("$tau do mr_quantile com a grade :", paste(q_grade07$tau, collapse = ", "), "\n")
+cat("as duas formulas sao identicas?",
+    identical(deparse(fit_q507$formula), deparse(q_grade07$formula)), "\n")
+cat("as duas tabelas de dados sao identicas?",
+    identical(dim(fit_q507$data), dim(q_grade07$data)), "\n")
+```
+
+### O que a grade aceita, e o que ela recusa
+
+A assinatura traz uma grade como valor padrao, e a leitura apressada e que ela
+seja uma lista branca. Nao e. O que o pacote verifica e apenas que o quantil
+esteja no intervalo aberto.
+
+```{r}
+#| label: c07-grid-tau
+linhas_tau07 <- do.call(rbind, lapply(GRADE07, function(tt) {
+  q <- mr_quantile(fit_q507, tau = tt)
+  data.frame(tau = tt,
+             N = fmt(q$model$coefficients[["N_rate_kg_ha"]], 5),
+             irrigacao = fmt(q$model$coefficients[["irrigation_mm"]], 5),
+             temp = fmt(q$model$coefficients[["mean_temp_C"]], 5),
+             intercep = fmt(q$model$coefficients[["(Intercept)"]], 4),
+             stringsAsFactors = FALSE)
+}))
+tab(linhas_tau07, caption = paste(
+  "Os cinco quantis da grade, um a um. O efeito da irrigacao muda pouco com o",
+  "quantil: a cresta e a mesma na cauda e no centro da distribuicao."))
+
+TAU_LIVRE07 <- 0.33
+q_livre07 <- tryCatch(mr_quantile(fit_q507, tau = TAU_LIVRE07),
+                      error = function(e) conditionMessage(e))
+cat("\nquantil fora da grade,", fmt(TAU_LIVRE07, 2), "->",
+    if (is.character(q_livre07)) paste("RECUSADO:", q_livre07) else
+      paste("ACEITO, com coeficiente de irrigacao",
+            fmt(q_livre07$model$coefficients[["irrigation_mm"]], 5)), "\n")
+cat("\no que e recusado sao as bordas:\n")
+for (tt in list(0, 1, -0.1, 1.5, c(0, 1))) {
+  r <- tryCatch({mr_quantile(fit_q507, tau = tt); "ACEITO"},
+                error = function(e) conditionMessage(e))
+  cat("  tau =", paste(format(tt), collapse = " e "), "->", r, "\n")
+}
+```
+
+A implicacao pratica e a seguinte: a grade do valor padrao e uma escolha
+editorial do autor, nao uma restricao do metodo. O bloco anterior ajustou um
+quantil fora da grade, e ele foi aceito, com o coeficiente de irrigacao medido
+e mostrado na saida. O mesmo vale para `mr_fit()` com o motor `quantile` e
+esse mesmo `tau`. Quem escreve um quantil na borda do intervalo, fechado em
+cima ou embaixo, recebe erro, e a mensagem diz exatamente o que fazer.
+
+## `mr_fit(engine = "quantile")` e `mr_quantile()` dao o mesmo modelo?
+
+O livro fez a pergunta, e a resposta e sim, com a precisao da maquina. Vale
+medir em vez de supor, porque uma diferenca de metodo aqui mudaria a decisao
+de qual caminho usar.
+
+```{r}
+#| label: c07-equivalencia-quantile
+c1 <- coef(fit_q507$model)
+c2 <- q507$model$coefficients
+diferenca07 <- max(abs(unname(c1) - unname(c2)))
+tab(data.frame(
+  termo = names(c1),
+  mr_fit_quantile = round(as.numeric(c1), 8),
+  mr_quantile = round(as.numeric(c2), 8),
+  stringsAsFactors = FALSE),
+  caption = "Os dois caminhos, no mesmo quantil, lado a lado.")
+cat("maior diferenca absoluta:", fmt(diferenca07, 12), "\n")
+cat("all.equal:", isTRUE(all.equal(unname(c1), unname(c2))), "\n")
+cat("\nentao qual usar?\n")
+cat("mr_fit: devolve objeto mr_fit, que e o que mr_validate e mr_compare aceitam\n")
+cat("mr_quantile: devolve lista de quatro campos, e aceita uma GRADE de quantis\n")
+```
+
+A diferenca real entre os dois caminhos nao e o modelo, e a **interface**: um
+devolve o objeto que o resto do pacote consome, o outro devolve uma estrutura
+que o resto do pacote nao reconhece. E a restricao do `tau` unico na
+validacao mostra o outro lado da troca: pela grade, e possivel ajustar cinco
+quantis de uma vez, mas e preciso escolher um deles para poder validar.
+
+```{r}
+#| label: c07-quantile-nao-e-mr-fit
+cat("mr_validate em mr_fit de quantile com varios tau ->",
+    tryCatch({mr_validate(mr_fit(FORM_C07, C07, engine = "quantile",
+                                 tau = GRADE07, goal = "prediction"), v = 3)
+             "aceitou"},
+           error = function(e) conditionMessage(e)), "\n")
+cat("\no mr_quantile nao e mr_fit, e o resto do pacote recusa:\n")
+cat("mr_validate(mr_quantile(...)) ->",
+    tryCatch({mr_validate(q507, v = 3); "aceitou"},
+             error = function(e) conditionMessage(e)), "\n")
+cat("mr_diagnose(mr_quantile(...)) ->",
+    tryCatch({mr_diagnose(q507); "aceitou"},
+             error = function(e) conditionMessage(e)), "\n")
+```
+
+## `mr_quantile` ignora o modelo que recebeu
+
+Um achado que muda a leitura do argumento `x`. `mr_quantile()` nao usa o ajuste
+que esta em `x$model`: ele le `x$formula` e `x$data` e ajusta de novo. O mesmo
+acontece com `mr_kernel()`. Isso significa que o resultado nao depende do motor
+do `mr_fit` de origem.
+
+```{r}
+#| label: c07-reajuste
+q_de_ols07 <- mr_quantile(fit_ols07, tau = 0.5)
+q_de_q507 <- mr_quantile(fit_q507, tau = 0.5)
+cat("mr_quantile a partir de um mr_fit ols e de um mr_fit quantile\n")
+cat("dao o mesmo vetor de coeficientes?",
+    isTRUE(all.equal(q_de_ols07$model$coefficients,
+                     q_de_q507$model$coefficients)), "\n")
+cat("motores de origem: ols e quantile\n\n")
+erro_reajuste07 <- tryCatch({mr_quantile(fit_gam07, tau = 0.5); NA_character_},
+                            error = function(e) "erro")
+cat("mr_quantile a partir do mr_fit de gam ->",
+    if (is.na(erro_reajuste07)) "aceitou" else "ERRO", "\n")
+cat("a mensagem dessa recusa e escrita pelo R no idioma da sessao, e por isso\n")
+cat("o livro nao a reproduz aqui. O motivo ja foi medido acima: mr_fit guarda\n")
+cat("a formula original, e a funcao s() so existe no ambiente que mr_fit monta\n")
+cat("no momento do ajuste.\n")
+```
+
+O lado bom desse desenho e que `mr_quantile()` funciona a partir de um `mr_fit`
+de qualquer motor, inclusive o motor `ols`, o que torna o caminho util para
+justificar um quantil sem trocar o modelo ajustado. O lado ruim e que a funcao
+nao reaproveita o ajuste que recebeu, e paga o tempo do ajuste de novo.
+
+## `mr_kernel`: o preco do modelo sem forma
+
+`mr_kernel()` delega ao pacote `np`, que estima a funcao de regressao por
+meios nao parametricos e sorteia a largura de banda por validacao cruzada
+interna. O preco disso e medido, e nao estimado de memoria.
+
+```{r}
+#| label: c07-kernel-tempo
+REPETICOES07 <- 3
+MULT_GAM07 <- 50
+MULT_OLS07 <- 200
+tempos_kernel07 <- vapply(seq_len(REPETICOES07), function(i)
+  system.time(mr_kernel(fit_ker07))[["elapsed"]], numeric(1))
+tempo_gam07 <- system.time(for (i in seq_len(MULT_GAM07))
+  mr_fit(FORM_GAM07, C07, engine = "gam"))[["elapsed"]] / MULT_GAM07
+tempo_ols07 <- system.time(for (i in seq_len(MULT_OLS07))
+  mr_fit(FORM_C07, C07, engine = "ols"))[["elapsed"]] / MULT_OLS07
+cat("n do cenario C:", nrow(C07), "\n")
+cat("mr_kernel(), uma medida por repeticao:", REPETICOES07, "\n")
+cat("mr_fit gam, media de", MULT_GAM07, "ajustes\n")
+cat("mr_fit ols, media de", MULT_OLS07, "ajustes\n\n")
+cat("mr_kernel() (s por chamada):", paste(fmt(tempos_kernel07, 2), collapse = ", "), "\n")
+cat("  minimo:", fmt(min(tempos_kernel07), 2),
+    "| maximo:", fmt(max(tempos_kernel07), 2), "\n")
+cat("mr_fit gam (s por ajuste):", fmt(tempo_gam07, 4), "\n")
+cat("mr_fit ols (s por ajuste):", fmt(tempo_ols07, 6), "\n\n")
+cat("razao kernel/gam:", fmt(mean(tempos_kernel07) / tempo_gam07, 1), "\n")
+cat("razao kernel/ols :", fmt(mean(tempos_kernel07) / tempo_ols07, 1), "\n")
+cat("razao gam/ols    :", fmt(tempo_gam07 / tempo_ols07, 1), "\n")
+```
+
+O numero acima e medido nesta maquina, nesta sessao, e ele muda de maquina para
+maquina. O que este livro declara e uma **politica de custo**, e nao um
+benchmark: a razao entre os motores e o que o leitor deve levar, e nao o segundo
+absoluto. Tres repeticoes mostram a ordem de grandeza e mostram tambem a
+dispersao, e aqui a dispersao e da propria ordem de grandeza do tempo medido.
+
+O proprio pacote `np` registra o tempo que gastou, o que da uma segunda
+medida, independente da primeira.
+
+```{r}
+#| label: c07-kernel-tempo-do-pacote
+kk07 <- mr_kernel(fit_ker07)
+usar("mr_kernel", x = "mr_fit")
+cat("tempo gasto pelo proprio np:", fmt(kk07$bandwidth$total.time, 2), "s\n")
+cat("tempo medido por system.time na chamada:",
+    fmt(min(tempos_kernel07), 2), "a", fmt(max(tempos_kernel07), 2), "s\n")
+cat("classe devolvida:", paste(class(kk07), collapse = ", "), "\n")
+cat("campos          :", paste(names(kk07), collapse = ", "), "\n")
+cat("classe da largura de banda:", class(kk07$bandwidth), "\n")
+cat("metodo de selecao da largura de banda:",
+    as.character(kk07$bandwidth$method), "\n")
+cat("numero de observacoes usadas na busca:", kk07$bandwidth$nobs, "\n")
+```
+
+Repare no que a tabela de campos revela: o objeto `mr_fit` do motor `kernel`
+**nao tem** o campo `bandwidth`. A largura de banda so aparece no objeto que
+`mr_kernel()` devolve. Quem precisa auditar a escolha do `np` tem de passar por
+`mr_kernel()`.
+
+```{r}
+#| label: c07-kernel-campos
+cat("mr_fit de kernel tem campo $bandwidth?",
+    "bandwidth" %in% names(as.list(fit_ker07)), "\n")
+cat("mr_kernel() tem campo $bandwidth?      ",
+    "bandwidth" %in% names(kk07), "\n")
+cat("existe metodo predict para a classe mr_kernel?",
+    !is.null(utils::getS3method("predict", "mr_kernel", optional = TRUE)), "\n")
+cat("existe metodo predict para a classe mr_fit?  ",
+    !is.null(utils::getS3method("predict", "mr_fit", optional = TRUE)), "\n")
+cat("existe metodo coef para a classe mr_kernel?  ",
+    !is.null(utils::getS3method("coef", "mr_kernel", optional = TRUE)), "\n")
+```
+
+::: {.callout-warning}
+## Onde o `...` do motor kernel atrapalha
+O pacote repassa o `...` de `mr_fit()` direto para `npregbw()`. O caminho para
+inspecionar a largura de banda, portanto, nao e pelo `mr_fit`: e pelo
+`mr_kernel()`, que devolve o objeto de largura de banda inteiro. Quem passa
+argumento de bandwidth pelo `mr_fit` aceita o resultado sem poder verificar, no
+objeto que recebeu, qual metodo foi de fato usado.
+:::
+
+O crescimento com o tamanho da amostra e o que torna essa razao ainda mais
+importante, porque a largura de banda e escolhida por busca sobre subconjuntos
+da amostra.
+
+```{r}
+#| label: c07-kernel-escala
+meia07 <- C07[seq_len(50), ]
+tempos_meio07 <- vapply(seq_len(REPETICOES07), function(i)
+  system.time(mr_kernel(mr_fit(FORM_C07, meia07, engine = "kernel")))[["elapsed"]],
+  numeric(1))
+cat("mr_kernel() com n =", nrow(meia07), "(s):",
+    paste(fmt(tempos_meio07, 2), collapse = ", "), "\n")
+cat("mr_kernel() com n =", nrow(C07), "(s):",
+    paste(fmt(tempos_kernel07, 2), collapse = ", "), "\n")
+cat("razao entre os dois tamanhos de amostra:",
+    fmt(max(tempos_kernel07) / max(tempos_meio07), 1), "\n")
+```
+
+O que se paga por esse tempo e uma superficie sem forma prescrita. E a
+vantagem, no cenario C, e grande: a cresta e uma propriedade do gerador, e o
+`np` nao precisa que ninguem a diga.
+
+## O que cada motor entrega, medido
+
+A pergunta que o capitulo responde e "qual motor usar para que objetivo". A
+medida que responde e a previsao fora de amostra, obtida com o proprio
+`mr_validate()` do pacote, no mesmo cenario e com a mesma divisao. E uma
+medida declarada como ilustracao: uma realizacao com poucas repeticoes, sem
+pretensao de taxa de acerto.
+
+```{r}
+#| label: c07-validacao-por-motor
+MOTORES07 <- list(ols = fit_ols07, robust = fit_rob07, quantile = fit_q507,
+                  kernel = fit_ker07, gam = fit_gam07)
+val07 <- lapply(MOTORES07, function(f) {
+  f$goal <- "prediction"
+  mr_validate(f, v = 3, repeats = 1, seed = 11L)
+})
+usar("mr_validate", x = "mr_fit", v = 3, repeats = 1, seed = 11L)
+tab07 <- do.call(rbind, lapply(names(val07), function(nm) {
+  s <- val07[[nm]]$summary
+  data.frame(engine = nm,
+             R2 = round(s$mean[s$metric == "R2"], 4),
+             RMSE = round(s$mean[s$metric == "RMSE"], 4),
+             MAE = round(s$mean[s$metric == "MAE"], 4),
+             stringsAsFactors = FALSE)
+}))
+tab(tab07, caption = paste(
+  "Previsao fora de amostra dos cinco motores, no cenario C, com o mesmo v, o",
+  "mesmo seed e uma realizacao. E uma ilustracao de ordem de grandeza, e nao",
+  "uma taxa de acerto: o capitulo de validacao declara a politica de",
+  "repeticao que este capitulo nao pode declarar."))
+```
+
+O kernel vence com folga, e nao e surpresa: a superficie verdadeira e um
+polinomio de segundo grau em tres variaveis, e o `np` representa isso sem
+hipotese nenhuma. O gam chega a boa parte do ganho e custa uma fracao do tempo.
+O `ols`, que e o motor padrao de todo o resto do livro, e o pior deles, e a
+razao esta visivel na figura: ele tenta descrever uma cresta com uma reta.
+
+```{r}
+#| label: c07-figura-motores
+N_REF07 <- 100
+grade_C07 <- data.frame(irrigation_mm = seq(100, 400, by = 2),
+                         N_rate_kg_ha = N_REF07, mean_temp_C = 26)
+grade_C07$verdadeira <- 12 - 0.00090 *
+  (grade_C07$irrigation_mm - (80 + 1.20 * grade_C07$N_rate_kg_ha))^2
+grade_C07$ols <- as.numeric(predict(fit_ols07$model, newdata = grade_C07))
+grade_C07$gam <- as.numeric(predict(fit_gam07$model, newdata = grade_C07))
+grade_C07$kernel <- as.numeric(predict(fit_ker07$model, newdata = grade_C07))
+erro_max07 <- vapply(c("ols", "gam", "kernel"),
+                     function(m) max(abs(grade_C07[[m]] - grade_C07$verdadeira)),
+                     numeric(1))
+cat("maior erro absoluto contra a superficie plantada, no nitrogenio de",
+    N_REF07, "kg/ha:\n")
+for (m in names(erro_max07)) cat("  ", m, ":", fmt(erro_max07[[m]], 3), "t/ha\n")
+cat("irrigacao do maximo segundo o ols:",
+    round(grade_C07$irrigation_mm[which.max(grade_C07$ols)]), "mm\n")
+cat("irrigacao do maximo segundo a superficie plantada:",
+    round(80 + 1.20 * N_REF07), "mm\n")
+
+curvas07 <- rbind(
+  data.frame(irrigation_mm = grade_C07$irrigation_mm,
+             motor = "superficie plantada", fit = grade_C07$verdadeira),
+  data.frame(irrigation_mm = grade_C07$irrigation_mm, motor = "ols",
+             fit = grade_C07$ols),
+  data.frame(irrigation_mm = grade_C07$irrigation_mm, motor = "gam",
+             fit = grade_C07$gam),
+  data.frame(irrigation_mm = grade_C07$irrigation_mm, motor = "kernel",
+             fit = grade_C07$kernel))
+curvas07$motor <- factor(curvas07$motor,
+                         levels = c("superficie plantada", "ols", "gam", "kernel"))
+ggplot(curvas07, aes(x = irrigation_mm, y = fit, colour = motor, linetype = motor)) +
+  geom_line(linewidth = .9) +
+  scale_colour_manual(values = c("superficie plantada" = VERDE, "ols" = VERM,
+                                 "gam" = AZUL, "kernel" = ROXO)) +
+  scale_linetype_manual(values = c("superficie plantada" = "dashed",
+                                   "ols" = "solid", "gam" = "solid",
+                                   "kernel" = "solid")) +
+  labs(x = "Irrigacao (mm)", y = "Produtividade ajustada (t/ha)",
+       colour = NULL, linetype = NULL,
+       title = "Tres motores contra a superficie plantada",
+       subtitle = paste("Cenario C na dose de nitrogenio de referencia.",
+                        "A reta do ols nao tem por onde virar; o gam acompanha",
+                        "a cresta; o kernel chega nela.")) +
+  tema_pacote()
+```
+
+::: {.callout-important}
+## O que a figura mostra que o R2 nao mostra
+A curva do `ols` tem o maximo longe do maximo da superficie plantada, e a
+distancia entre as duas posicoes e a perda de produtividade que a @sec-crista
+quantifica. Um R2 de previsao baixo e o sintoma. A posicao do maximo e o
+diagnostico, e ela e a leitura que o relatorio de manejo precisa.
+:::
+
+```{r}
+#| label: c07-fechar
+salvar_uso("07")
+salvar_decisoes("07",
+  paste("Usar gam como motor padrao de forma; usar quantile quando a pergunta",
+        "e sobre a cauda da distribuicao; e usar kernel so quando o tempo",
+        "medido em segundos for aceitavel no trabalho inteiro."),
+  paste("No cenario C, o R2 fora de amostra foi",
+        fmt(tab07$R2[tab07$engine == "ols"], 4), "para o ols,",
+        fmt(tab07$R2[tab07$engine == "gam"], 4), "para o gam e",
+        fmt(tab07$R2[tab07$engine == "kernel"], 4), "para o kernel. O preco",
+        "medido nesta execucao: mr_kernel() levou",
+        fmt(min(tempos_kernel07), 2), "a", fmt(max(tempos_kernel07), 2),
+        "s no cenario completo, contra", fmt(tempo_ols07, 6),
+        "s do ols e", fmt(tempo_gam07, 4),
+        "s do gam: razao de", fmt(mean(tempos_kernel07) / tempo_gam07, 1),
+        "vezes sobre o gam. O gam entrega boa parte do ganho do kernel por uma",
+        "fracao do preco."))
+```

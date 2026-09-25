@@ -1,0 +1,631 @@
+# Validacao e comparacao {#sec-validacao}
+
+```{r}
+#| label: c08-setup
+#| include: false
+source("_common.R")
+F08 <- dados_F()
+C08 <- dados_C()
+FORM_F08 <- yield_t_ha ~ organic_matter_pct + available_P_mg_dm3 + season_rain_mm
+FORM_C08 <- yield_t_ha ~ N_rate_kg_ha + irrigation_mm + mean_temp_C
+FORM_G08 <- yield_t_ha ~ N_rate_kg_ha + s(irrigation_mm) + mean_temp_C
+```
+
+Este e o capitulo que separa **ajuste** de **previsao**, e a separacao comeca
+antes de qualquer comando. Um ajuste descreve os dados que entraram nele. Uma
+previsao descreve o que o modelo faz com observacoes que nao entraram. Sao dois
+numeros, com unidades diferentes, que vivem em campos diferentes do mesmo
+objeto, e que respondem a perguntas que nao se substituem.
+
+O cenario F existe para tornar essa separacao visivel. O sinal esta no dado, o
+modelo tem sinal, o ajuste e bonito, e ainda assim a previsao fora de amostra
+e mediocre. Todo o capitulo gira em torno de medir os dois numeros e mostrar que
+eles nao contam a mesma historia.
+
+## O que `mr_validate()` devolve
+
+A funcao recebe um objeto `mr_fit` e devolve uma lista de quatro campos: o
+motor usado, a tabela de metricas por repeticao, o resumo com media e desvio, e
+a tabela de previsoes linha a linha. Os tres argumentos sao `v`, o numero de
+dobras, `repeats`, o numero de repeticoes, e `seed`, a semente da divisao.
+
+```{r}
+#| label: c08-validate-anatomia
+fitF08 <- mr_fit(FORM_F08, F08, goal = "prediction")
+val1_08 <- mr_validate(fitF08, v = 5, repeats = 1, seed = 20260828L)
+usar("mr_validate", x = "mr_fit", v = 5, repeats = 1, seed = 20260828L)
+cat("campo 1, engine     :", val1_08$engine, "\n")
+cat("campo 2, metrics    :", nrow(val1_08$metrics), "linha(s) por",
+    ncol(val1_08$metrics), "metrica(s)\n")
+cat("campo 3, summary    :", nrow(val1_08$summary), "linha(s)\n")
+cat("campo 4, predictions:", nrow(val1_08$predictions), "linha(s)\n\n")
+tab(data.frame(
+  campo = names(val1_08),
+  o_que_e = c("copia do motor do mr_fit de origem",
+              "uma linha por REPETICAO, e uma coluna por metrica",
+              "uma linha por metrica, com a media e o desvio entre repeticoes",
+              "uma linha por observacao POR repeticao"),
+  dimensao = c(paste(length(val1_08$engine), "valor"),
+               paste(dim(val1_08$metrics), collapse = " por "),
+               paste(dim(val1_08$summary), collapse = " por "),
+               paste(dim(val1_08$predictions), collapse = " por ")),
+  stringsAsFactors = FALSE),
+  caption = paste("Os quatro campos de mr_validate(). Repare que metrics e",
+                  "summary tem as mesmas metricas em eixos diferentes: uma e",
+                  "por repeticao, a outra e por metrica. Sao as duas leituras",
+                  "do mesmo conjunto."))
+```
+
+## A armadilha: `metrics` tem uma linha por repeticao
+
+Este e o ponto que mais custa tempo para quem usa a funcao pela primeira vez. A
+tabela `metrics` **nao** e a tabela de metricas do modelo: e o historico bruto,
+com uma linha por repeticao. A tabela `summary` e a que se reporta.
+
+```{r}
+#| label: c08-metrics-vs-summary
+val2_08 <- mr_validate(fitF08, v = 5, repeats = 2, seed = 20260828L)
+val5_08 <- mr_validate(fitF08, v = 5, repeats = 5, seed = 20260828L)
+usar("mr_validate", x = "mr_fit", v = 5, repeats = 2, seed = 20260828L)
+usar("mr_validate", x = "mr_fit", v = 5, repeats = 5, seed = 20260828L)
+cat("n de observacoes no cenario F:", nrow(F08), "\n\n")
+cat("repeticoes | linhas em metrics | linhas em predictions | desvio em summary\n")
+for (v in list(val1_08, val2_08, val5_08)) {
+  cat(sprintf("    %d      |        %d         |         %d          | %s\n",
+              nrow(v$metrics), nrow(v$metrics), nrow(v$predictions),
+              paste(unique(v$summary$sd), collapse = ", ")))
+}
+cat("\n")
+tab(val2_08$metrics, caption = paste(
+  "A tabela metrics com duas repeticoes: duas linhas, as mesmas cinco",
+  "metricas. Se alguem relatar 'o RMSE deste modelo' lendo esta tabela, o",
+  "numero que sai depende de qual linha foi pega."))
+tab(val2_08$summary, caption = paste(
+  "A tabela summary com as mesmas duas repeticoes: uma linha por metrica, com",
+  "a media e o desvio. E esta a tabela que se relata."))
+```
+
+Com uma repeticao so, o desvio de `summary` e `NA`, e o `NA` nao vem de um
+problema: vem de uma amostra de tamanho um, em que desvio-padrao nao esta
+definido.
+
+```{r}
+#| label: c08-repeats-um
+cat("com repeats = 1, o desvio de summary e:\n")
+print(val1_08$summary$sd)
+cat("\na media e o proprio valor da unica repeticao?",
+    isTRUE(all.equal(val1_08$summary$mean, unname(val1_08$metrics[1, ]))), "\n")
+cat("com repeats = 2, o desvio passa a existir:\n")
+print(val2_08$summary$sd)
+cat("\nrepeticoes declaradas, linhas em metrics e desvio do R2:\n")
+for (r in c(1L, 2L, 5L)) {
+  vv <- mr_validate(fitF08, v = 5, repeats = r, seed = 20260828L)
+  cat("  repeats =", r, "| linhas:", nrow(vv$metrics),
+      "| desvio do R2:",
+      fmt(vv$summary$sd[vv$summary$metric == "R2"], 6), "\n")
+}
+```
+
+A politica do livro e escrita, nao assumida: **quem relata uma metrica de
+previsao relata `summary$mean`, e relata `summary$sd` junto**. Com uma repeticao
+nao ha desvio, e o livro diz isso no texto em vez de mostrar um numero sem
+incerteza.
+
+::: {.callout-warning}
+## A leitura errada que o pacote nao impede
+`metrics` com uma unica repeticao e um data.frame de uma linha,
+e ele passa despercebido em qualquer linha de codigo que faca
+`mean(v$metrics$RMSE)` ou `v$metrics$RMSE`. Nenhum aviso, nenhum erro. O que o livro proibe e essa leitura,
+e o que exige e a coluna `metric` do `summary`, que nunca tem uma linha so.
+:::
+
+## `predictions`: uma linha por observacao, por repeticao
+
+O quarto campo e o mais rico, e e o que permite verificar a validacao em vez de
+confia-la. Ele tem cinco colunas, e a coluna `repeat_id` e a que multiplica o
+numero de linhas.
+
+```{r}
+#| label: c08-predictions-estrutura
+tab(data.frame(
+  coluna = names(val2_08$predictions),
+  conteudo = c("a repeticao a que a linha pertence",
+               "a posicao da observacao no dado original",
+               "a resposta observada",
+               "o valor previsto pelo modelo ajustado sem aquela observacao",
+               "a dobra a que a observacao foi designada nesta repeticao"),
+  stringsAsFactors = FALSE),
+  caption = paste("As cinco colunas de predictions. Com repeats = 2 e n",
+                  "observacoes, o data.frame tem o dobro de linhas do dado."))
+cat("n no dado                       :", nrow(F08), "\n")
+cat("linhas com repeats = 1         :", nrow(val1_08$predictions), "\n")
+cat("linhas com repeats = 2         :", nrow(val2_08$predictions), "\n")
+cat("linhas com repeats = 5         :", nrow(val5_08$predictions), "\n")
+cat("n vezes o numero de repeticoes  :",
+    nrow(val5_08$predictions) / (nrow(F08) * 5), "\n\n")
+cat("repeticoes presentes em predictions:",
+    paste(sort(unique(val5_08$predictions$repeat_id)), collapse = ", "), "\n")
+cat("linhas por repeticao              :",
+    paste(as.vector(table(val5_08$predictions$repeat_id)), collapse = ", "), "\n")
+cat("dobras presentes, na repeticao 1  :",
+    paste(sort(unique(val1_08$predictions$fold)), collapse = ", "), "\n")
+cat("dobras presentes, na repeticao 2  :",
+    paste(sort(unique(val2_08$predictions$fold[
+      val2_08$predictions$repeat_id == 2])), collapse = ", "), "\n")
+cat("a divisao muda entre repeticoes?   :",
+    !identical(val1_08$predictions$fold,
+               val2_08$predictions$fold[
+                 val2_08$predictions$repeat_id == 2]), "\n")
+```
+
+O grafo de observado contra previsto e a leitura que mostra se o modelo erra de
+forma sistematica ou apenas por ruido. A diagonal e a previsao perfeita; a
+distancia de cada ponto ate ela e o erro.
+
+```{r}
+#| label: c08-figura-predicoes
+ggplot(val5_08$predictions, aes(x = observed, y = predicted)) +
+  geom_abline(slope = 1, intercept = 0, colour = CINZA, linetype = "dashed",
+              linewidth = .6) +
+  geom_smooth(method = "lm", formula = y ~ x, colour = AZUL, linewidth = .8,
+              se = FALSE) +
+  facet_wrap(~ repeat_id, nrow = 1) +
+  labs(x = "Resposta observada (t/ha)", y = "Resposta prevista (t/ha)",
+       title = "Cinco repeticoes de validacao cruzada",
+       subtitle = paste("Cada painel e uma divisao diferente do mesmo dado. A",
+                        "reta tracejada e a previsao perfeita; a reta azul e",
+                        "a regressao do previsto no observado.")) +
+  tema_pacote(9)
+```
+
+## O cenario F: ajuste bonito, previsao mediocre
+
+Aqui esta a medicao que justifica o cenario inteiro. O R2 do ajuste e o R2
+fora de amostra sao calculados no mesmo modelo e no mesmo dado, e nao medem a
+mesma coisa.
+
+```{r}
+#| label: c08-treino-vs-fora
+r2_treino08 <- summary(fitF08$model)$r.squared
+r2_ajustado08 <- summary(fitF08$model)$adj.r.squared
+r2_fora08 <- val5_08$summary$mean[val5_08$summary$metric == "R2"]
+r2_fora_sd08 <- val5_08$summary$sd[val5_08$summary$metric == "R2"]
+cat("R2 do ajuste, lido no summary() do lm :", fmt(r2_treino08, 4), "\n")
+cat("R2 ajustado do ajuste                  :", fmt(r2_ajustado08, 4), "\n")
+cat("R2 fora de amostra, media de", nrow(val5_08$metrics), "repeticoes:",
+    fmt(r2_fora08, 4), "\n")
+cat("desvio-padrao entre repeticoes          :", fmt(r2_fora_sd08, 4), "\n")
+cat("diferenca                              :", fmt(r2_treino08 - r2_fora08, 4), "\n")
+cat("\nRMSE fora de amostra                   :",
+    fmt(val5_08$summary$mean[val5_08$summary$metric == "RMSE"], 4), "t/ha\n")
+cat("desvio do residuo do ajuste, para comparar:",
+    fmt(summary(fitF08$model)$sigma, 4), "t/ha\n")
+cat("\nO ajuste e bom. A previsao e mediocre. Os dois numeros sao verdadeiros.\n")
+
+comparacao_r2_08 <- data.frame(
+  origem = c("R2 do ajuste", "R2 ajustado do ajuste", "R2 fora de amostra"),
+  valor = c(r2_treino08, r2_ajustado08, r2_fora08),
+  incerteza = c(NA_real_, NA_real_, r2_fora_sd08),
+  stringsAsFactors = FALSE)
+ggplot(comparacao_r2_08, aes(x = reorder(origem, valor), y = valor, fill = origem)) +
+  geom_col(width = .55, show.legend = FALSE) +
+  geom_errorbar(aes(ymin = valor - incerteza, ymax = valor + incerteza),
+                width = .16, colour = CINZA, na.rm = TRUE) +
+  coord_flip() +
+  scale_fill_manual(values = c("R2 do ajuste" = LARANJA,
+                               "R2 ajustado do ajuste" = CINZA,
+                               "R2 fora de amostra" = AZUL)) +
+  labs(x = NULL, y = "R2",
+       title = "O mesmo modelo, tres numeros, tres leituras",
+       subtitle = paste("A barra azul vem de", nrow(val5_08$metrics),
+                        "repeticoes de validacao cruzada, com a barra de",
+                        "incerteza entre elas.")) +
+  tema_pacote()
+```
+
+::: {.callout-important}
+## A ordem de leitura que este capitulo proibe
+Nao reporte o R2 do ajuste como se fosse desempenho preditivo, e nao reporte o
+R2 fora de amostra sem o seu desvio. No cenario F os tres numeros ficam lado a
+lado, e ainda assim significam coisas opostas: o primeiro mede o que o modelo
+aprendeu com os dados que viu, o terceiro mede o que ele faz com dados que nao
+viu. A leitura que o relatorio de manejo precisa e a do R2 fora de amostra, e
+ela vem sempre acompanhada da do ajuste, para que a distancia entre as duas
+fique visivel.
+:::
+
+## A semente: propagada, e nao isolada
+
+Este e o achado mais consequente do capitulo, e ele tem duas metades que precisam
+ser separadas com cuidado, porque uma delas e tranquilizadora e a outra nao e.
+
+A primeira metade e facil de ver: o argumento `seed` e mesmo honrado. Duas
+sementes diferentes produzem divisoes diferentes e resultados diferentes.
+
+```{r}
+#| label: c08-semente-propagada
+sem1_08 <- mr_validate(fitF08, v = 5, repeats = 2, seed = 1L)
+sem2_08 <- mr_validate(fitF08, v = 5, repeats = 2, seed = 999L)
+cat("RMSE com a semente 1  :",
+    fmt(sem1_08$summary$mean[sem1_08$summary$metric == "RMSE"], 8), "\n")
+cat("RMSE com a semente 999:",
+    fmt(sem2_08$summary$mean[sem2_08$summary$metric == "RMSE"], 8), "\n")
+cat("as divisoes sao iguais?", identical(sem1_08$predictions$fold,
+                                        sem2_08$predictions$fold), "\n")
+cat("as medias sao iguais?  ",
+    isTRUE(all.equal(sem1_08$summary$mean, sem2_08$summary$mean)), "\n\n")
+```
+
+E, na outra direcao, `mr_validate()` e reprodutivel em si mesmo: a mesma
+chamada com a mesma semente devolve as mesmas dobras e o mesmo resultado, mesmo
+quando a chamada anterior mexeu no gerador. Isso acontece porque a divisao e
+construida com uma chamada interna de `set.seed()`, e por isso o resultado da
+validacao nao depende de nada que veio antes.
+
+```{r}
+#| label: c08-reprodutivel-em-si
+val_a08 <- mr_validate(fitF08, v = 5, repeats = 2, seed = 7L)
+val_b08 <- mr_validate(fitF08, v = 5, repeats = 2, seed = 7L)
+cat("mesma chamada, mesma semente, primeira vez :",
+    fmt(val_a08$summary$mean[val_a08$summary$metric == "RMSE"], 8), "\n")
+cat("mesma chamada, mesma semente, segunda vez :",
+    fmt(val_b08$summary$mean[val_b08$summary$metric == "RMSE"], 8), "\n")
+cat("as dobras sao iguais?", identical(val_a08$predictions$fold,
+                                       val_b08$predictions$fold), "\n")
+cat("as medias sao iguais?  ",
+    isTRUE(all.equal(val_a08$summary$mean, val_b08$summary$mean)), "\n")
+```
+
+A segunda metade e a que ninguem procura, e e ela que muda a escrita de um laco
+de Monte Carlo. O pacote **consome** o gerador de numeros aleatorios sem
+restitui-lo. O estado global `.Random.seed` depois de uma chamada nao e o
+estado global de antes da chamada, e isso vale para o `mr_validate()`, para o
+`mr_bootstrap()` e para o `mr_regularize()`. O `mr_select()` com metodo "aic",
+ao contrario, nao toca o gerador.
+
+O teste cabe em tres linhas, e cada linha testa uma hipotese.
+
+```{r}
+#| label: c08-sequestro-teste
+set.seed(42); sorteio_controle <- rnorm(1)
+set.seed(42); mr_validate(fitF08, v = 5, repeats = 2, seed = 1L)
+sorteio_apos_validate <- rnorm(1)
+set.seed(42); mr_bootstrap(fitF08, R = 20, seed = 1L)
+sorteio_apos_bootstrap <- rnorm(1)
+set.seed(42); mr_regularize(fitF08, seed = 1L)
+sorteio_apos_regularize <- rnorm(1)
+set.seed(42); mr_select(fitF08, method = "aic", seed = 1L)
+sorteio_apos_select <- rnorm(1)
+usar("mr_bootstrap", x = "mr_fit", R = 20, seed = 1L)
+usar("mr_regularize", x = "mr_fit", seed = 1L)
+usar("mr_select", x = "mr_fit", method = "aic", seed = 1L)
+
+hijack_08 <- c(
+  validate = !isTRUE(all.equal(sorteio_apos_validate, sorteio_controle)),
+  bootstrap = !isTRUE(all.equal(sorteio_apos_bootstrap, sorteio_controle)),
+  regularize = !isTRUE(all.equal(sorteio_apos_regularize, sorteio_controle)),
+  select_aic = !isTRUE(all.equal(sorteio_apos_select, sorteio_controle)))
+tab(data.frame(
+  chamada = c("mr_validate()", "mr_bootstrap()", "mr_regularize()",
+              "mr_select(method = 'aic')"),
+  sorteio_seguinte = c(sorteio_apos_validate, sorteio_apos_bootstrap,
+                       sorteio_apos_regularize, sorteio_apos_select),
+  igual_ao_controle = c(isTRUE(all.equal(sorteio_apos_validate, sorteio_controle)),
+                        isTRUE(all.equal(sorteio_apos_bootstrap, sorteio_controle)),
+                        isTRUE(all.equal(sorteio_apos_regularize, sorteio_controle)),
+                        isTRUE(all.equal(sorteio_apos_select, sorteio_controle))),
+  sequestrou_o_gerador = unname(hijack_08),
+  stringsAsFactors = FALSE),
+  caption = paste(
+    "O teste do sequestro. Um sorteio igual ao controle significa que a chamada",
+    "devolveu o gerador ao estado em que o encontrou. A ultima coluna e o",
+    "resumo disso."))
+cat("\nchamadas que sequestraram o gerador:", sum(hijack_08), "de",
+    length(hijack_08), "\n")
+```
+
+A diferenca nao e academica. A primeira consequencia pratica e o **script
+misto**: um script que alterna chamada do pacote e sorteio proprio nao e
+reproduzivel, porque a chamada do pacote muda o fluxo do sorteio do script.
+
+```{r}
+#| label: c08-script-misto
+set.seed(1); mr_validate(fitF08, v = 5, repeats = 1, seed = 1L)
+sorteio_misto <- rnorm(1)
+set.seed(1); preservando_semente(mr_validate(fitF08, v = 5, repeats = 1,
+                                              seed = 1L))
+sorteio_isolado <- rnorm(1)
+set.seed(1); sorteio_puro <- rnorm(1)
+cat("sorteio do script, sem isolar a chamada :", fmt(sorteio_misto, 8),
+    "| igual ao puro?", isTRUE(all.equal(sorteio_misto, sorteio_puro)), "\n")
+cat("sorteio do script, isolando a chamada   :", fmt(sorteio_isolado, 8),
+    "| igual ao puro?", isTRUE(all.equal(sorteio_isolado, sorteio_puro)), "\n")
+```
+
+A segunda consequencia e o **laco de Monte Carlo**: se cada repeticao consome o
+gerador sem restitui-lo, a serie de sorteios do chamador deixa de ser uma
+amostra independente e passa a depender de quantas chamadas de pacote veio
+antes. O que o livro faz, e o que qualquer usuario deveria fazer, e preservar o
+estado em volta de cada chamada e dar semente propria a cada repeticao. Repare
+que a semente propria por repeticao resolve o problema da validacao, mas nao o
+do chamador: e preciso o wrapper.
+
+```{r}
+#| label: c08-monte-carlo
+N_REP08 <- 5
+set.seed(2024L)
+serie_controle <- vapply(seq_len(N_REP08), function(r) rnorm(1), numeric(1))
+set.seed(2024L)
+serie_isolada <- vapply(seq_len(N_REP08), function(r) {
+  preservando_semente(mr_validate(fitF08, v = 5, repeats = 1,
+                                  seed = 100L + r))
+  rnorm(1)
+}, numeric(1))
+set.seed(2024L)
+serie_crua <- vapply(seq_len(N_REP08), function(r) {
+  mr_validate(fitF08, v = 5, repeats = 1, seed = 100L + r)
+  rnorm(1)
+}, numeric(1))
+set.seed(2024L)
+r2_isolado <- vapply(seq_len(N_REP08), function(r)
+  preservando_semente(mr_validate(fitF08, v = 5, repeats = 1,
+                                  seed = 100L + r))$summary$mean[3], numeric(1))
+set.seed(2024L)
+r2_cruo <- vapply(seq_len(N_REP08), function(r)
+  mr_validate(fitF08, v = 5, repeats = 1, seed = 100L + r)$summary$mean[3],
+  numeric(1))
+tab(data.frame(
+  repeticao = seq_len(N_REP08),
+  sorteio_do_chamador_isolado = round(as.numeric(serie_isolada), 5),
+  sorteio_do_chamador_cru = round(as.numeric(serie_crua), 5),
+  R2_da_validacao_isolado = round(as.numeric(r2_isolado), 5),
+  R2_da_validacao_cru = round(as.numeric(r2_cruo), 5),
+  stringsAsFactors = FALSE),
+  caption = paste("Cinco repeticoes, semente propria por repeticao. O que muda",
+                  "e a serie de sorteios do chamador; o R2 da validacao e o",
+                  "mesmo nos dois casos, porque a validacao fixa a propria",
+                  "semente. E por isso que o erro e silencioso."))
+cat("\na serie do chamador isolada reproduz o controle?",
+    isTRUE(all.equal(serie_isolada, serie_controle)), "\n")
+cat("a serie do chamador sem isolar reproduz o controle?",
+    isTRUE(all.equal(serie_crua, serie_controle)), "\n")
+cat("o R2 da validacao muda com o isolamento?",
+    !isTRUE(all.equal(r2_isolado, r2_cruo)), "\n")
+```
+
+::: {.callout-important}
+## A politica do livro, escrita
+Todo bloco deste livro que sorteia passa por `preservando_semento()` ou
+`sorteando()`, dois helpers que guardam `.Random.seed` antes da chamada e o
+restituem depois. E toda repeticao de Monte Carlo ganha semente propria,
+derivada do indice da repeticao. Nenhum numero de previsao deste livro depende
+de sorteio que nao esteja dentro dessa politica, e por isso todos eles se
+reproduzem com o livro como ele esta.
+:::
+
+## `mr_compare()`: a comparacao que o pacote faz por voce
+
+`mr_compare()` recebe **dois ou mais** objetos `mr_fit`, nomeados, e devolve
+tres campos: a tabela de inferencia, a tabela de previsao e uma nota que separa
+as duas. Ele recusa com mensagem explicita qualquer coisa que nao tenha vindo de
+`mr_fit()`.
+
+```{r}
+#| label: c08-compare-recusa
+cat("um objeto so ->\n  ",
+    tryCatch({mr_compare(fitF08); "aceitou"}, error = function(e) conditionMessage(e)), "\n")
+cat("nenhum objeto ->\n  ",
+    tryCatch({mr_compare(); "aceitou"}, error = function(e) conditionMessage(e)), "\n")
+cat("um mr_fit e um gam cru do mgcv ->\n  ",
+    tryCatch({mr_compare(fitF08, mgcv::gam(FORM_G08, data = C08)); "aceitou"},
+             error = function(e) conditionMessage(e)), "\n")
+cat("um mr_fit e um lm cru do stats ->\n  ",
+    tryCatch({mr_compare(fitF08, lm(FORM_F08, data = F08)); "aceitou"},
+             error = function(e) conditionMessage(e)), "\n")
+```
+
+As duas recusas sao diferentes e a distincao importa. A primeira e sobre a
+**quantidade** de objetos; a segunda e sobre a **procedencia**. Quem escreve
+`mr_compare(fit, lm(...))` recebe a segunda, e ela nao diz nada sobre quantos
+objetos foram passados nem sobre quantos deles o pacote reconheceu.
+
+```{r}
+#| label: c08-compare-completo
+cfit_ols08 <- mr_fit(FORM_C08, C08, engine = "ols", goal = "prediction")
+cfit_gam08 <- mr_fit(FORM_G08, C08, engine = "gam", goal = "prediction")
+cfit_rob08 <- suppressWarnings(mr_fit(FORM_C08, C08, engine = "robust",
+                                      goal = "prediction"))
+cfit_ker08 <- mr_fit(FORM_C08, C08, engine = "kernel", goal = "prediction")
+avisos08 <- character(0)
+cmp08 <- withCallingHandlers(
+  mr_compare(linear = cfit_ols08, gam = cfit_gam08, robust = cfit_rob08,
+             kernel = cfit_ker08, v = 5, repeats = 2, seed = 7L),
+  warning = function(cond) {
+    avisos08 <<- c(avisos08, conditionMessage(cond))
+    invokeRestart("muffleWarning")
+  })
+usar("mr_compare", validation = TRUE, v = 5, repeats = 2, seed = 7L)
+cat("campos devolvidos:", paste(names(cmp08), collapse = ", "), "\n")
+cat("linhas em inference :", nrow(cmp08$inference), "\n")
+cat("linhas em prediction:", nrow(cmp08$prediction), "\n\n")
+cat("nota do proprio pacote:\n  ", cmp08$note, "\n\n")
+cat("avisos capturados durante a comparacao (", length(avisos08), "):\n", sep = "")
+if (length(avisos08)) cat(paste("  -", avisos08, collapse = "\n"), "\n")
+```
+
+A tabela de inferencia e a primeira das duas, e ela e onde aparece o primeiro
+problema serio.
+
+```{r}
+#| label: c08-inference
+tab(data.frame(
+  model = cmp08$inference$model,
+  engine = cmp08$inference$engine,
+  AIC = ifelse(is.na(cmp08$inference$AIC), "NA",
+               fmt(cmp08$inference$AIC, 2)),
+  BIC = ifelse(is.na(cmp08$inference$BIC), "NA",
+               fmt(cmp08$inference$BIC, 2)),
+  R2 = ifelse(is.na(cmp08$inference$R2_or_gam_R2), "NA",
+              fmt(cmp08$inference$R2_or_gam_R2, 4)),
+  R2_ajustado = ifelse(is.na(cmp08$inference$adjusted_R2_or_deviance_explained),
+                       "NA",
+                       fmt(cmp08$inference$adjusted_R2_or_deviance_explained, 4)),
+  stringsAsFactors = FALSE),
+  caption = paste("A tabela de inferencia. Repare nas celulas NA, e no que o",
+                  "pacote NAO escreveu ao lado delas para explicar."))
+```
+
+::: {.callout-warning}
+## O `NA` que nao se explica sozinho
+Em `mr_compare()$inference`, as colunas `AIC` e `BIC` saem **`NA` para os
+motores `robust` e `kernel`**. A causa e que `stats::AIC()` nao se aplica aos
+objetos desses motores, e o pacote preenche `NA` dentro de um `tryCatch()` sem
+emitir aviso. O leitor ve `NA` na tabela e nao ve a razao. E o `note` da linha
+correspondente, na tabela de previsao, tambem e `NA`, o que tira a unica coluna
+de texto que poderia servir de nota. A correcao sugerida ao autor do pacote esta
+na @sec-nota: preencher o `note` tambem na tabela de inferencia, ou emitir aviso
+quando o criterio nao se aplica.
+:::
+
+O segundo problema e o inverso: um motor que nao converge continua na tabela
+como se estivesse bem. O `robustbase` emite um aviso durante o ajuste e continua
+devolvendo coeficientes.
+
+```{r}
+#| label: c08-robust-nao-convergiu
+cat("o objeto do motor robust traz converged:",
+    cfit_rob08$model$converged, "| iteracoes:", cfit_rob08$model$iter, "\n")
+cat("e mesmo assim ele entrou na tabela de previsao:",
+    "robust" %in% cmp08$prediction$model, "\n")
+cat("com R2 fora de amostra de",
+    fmt(cmp08$prediction$mean[cmp08$prediction$model == "robust" &
+                                cmp08$prediction$metric == "R2"], 4), "\n")
+cat("\no aviso que vazou durante a comparacao e este:\n  ", avisos08[1], "\n")
+cat("\ne o aviso nao acompanha o ajuste inicial, e sim o reajuste interno:\n")
+avisos_isolo08 <- character(0)
+invisible(withCallingHandlers(mr_fit(FORM_C08, C08, engine = "robust",
+                                     goal = "prediction"),
+  warning = function(cond) {
+    avisos_isolo08 <<- c(avisos_isolo08, conditionMessage(cond))
+    invokeRestart("muffleWarning")
+  }))
+cat("  mr_fit(engine = 'robust') sozinho emitiu", length(avisos_isolo08),
+    "aviso(s)\n")
+```
+
+O aviso, portanto, nao acompanha o modelo que o usuario ajustou: ele nasce
+dentro da validacao cruzada, em cada reajuste, e chega ao console no meio de
+uma tabela. Quem le a tabela sem o console ve uma linha de previsao sem
+ressalva nenhuma.
+
+## O que a tabela de previsao diz
+
+A segunda tabela e a que responde a pergunta de previsao, e ela cobre os quatro
+motores, inclusive os dois cujo AIC e `NA`.
+
+```{r}
+#| label: c08-prediction-tabela
+wide08 <- do.call(rbind, lapply(unique(cmp08$prediction$model), function(m) {
+  sub <- cmp08$prediction[cmp08$prediction$model == m, ]
+  data.frame(model = m, engine = sub$engine[1],
+             R2 = fmt(sub$mean[sub$metric == "R2"], 4),
+             desvio_R2 = fmt(sub$sd[sub$metric == "R2"], 4),
+             RMSE = fmt(sub$mean[sub$metric == "RMSE"], 4),
+             notas_vazias = sum(is.na(sub$note)),
+             linhas = nrow(sub),
+             stringsAsFactors = FALSE)
+}))
+tab(wide08, caption = paste(
+  "A tabela de previsao, em uma linha por motor. Repare que a coluna",
+  "notas_vazias e o numero de notas vazias: em todos os quatro casos vale o",
+  "total de linhas, porque o campo note fica NA quando a validacao da certo. E",
+  "a unica coluna de texto da tabela, e ela nunca e usada."))
+```
+
+O quadro completo, com as cinco metricas por motor, esta aqui, e e a leitura
+que o livro recomenda para o relatorio.
+
+```{r}
+#| label: c08-prediction-longa
+tab(cmp08$prediction[, c("model", "engine", "metric", "mean", "sd", "note")],
+    digits = 4,
+    caption = paste("A tabela de previsao como o pacote a devolve: uma linha",
+                    "por motor e por metrica, com a media e o desvio entre as",
+                    "repeticoes, e a coluna note, vazia em todas as linhas."))
+```
+
+A figura junta as duas metades: a primeira mostra o que o AIC diz, e o `NA` que
+ele deixa; a segunda mostra o que a previsao diz, e que ela cobre todos.
+
+```{r}
+#| label: c08-figura-comparacao
+AIC08 <- cmp08$inference[, c("model", "AIC", "BIC")]
+AIC08$AIC <- as.numeric(AIC08$AIC)
+AIC08$BIC <- as.numeric(AIC08$BIC)
+AIC08$medido <- AIC08$AIC - min(AIC08$AIC, na.rm = TRUE)
+AIC08$medido[is.na(AIC08$AIC)] <- NA_real_
+ggplot(AIC08, aes(x = reorder(model, medido), y = medido)) +
+  geom_col(fill = LARANJA, width = .55, na.rm = TRUE) +
+  geom_text(aes(label = ifelse(is.na(medido), "AIC nao disponivel", "")),
+            colour = VERM, size = 3.2, vjust = -0.6, na.rm = TRUE) +
+  coord_flip() +
+  scale_y_continuous(labels = function(z) paste0(round(z), " acima do menor AIC")) +
+  labs(x = NULL, y = NULL,
+       title = "O que a inferencia cobre, e o que ela nao cobre",
+       subtitle = paste("AIC relativo para os motores que o pacote consegue",
+                        "avaliar. O motor sem AIC tem previsao assim mesmo,",
+                        "como a figura seguinte mostra.")) +
+  tema_pacote()
+
+ggplot(wide08, aes(x = reorder(model, as.numeric(R2)), y = as.numeric(R2))) +
+  geom_col(fill = AZUL, width = .55) +
+  geom_errorbar(aes(ymin = as.numeric(R2) - as.numeric(desvio_R2),
+                    ymax = as.numeric(R2) + as.numeric(desvio_R2)),
+                width = .16, colour = CINZA) +
+  coord_flip() +
+  labs(x = NULL, y = "R2 fora de amostra",
+       title = "O que a previsao cobre, e cobre todos os motores",
+       subtitle = paste("Os mesmos quatro motores, a mesma divisao. A barra de",
+                        "incerteza e o desvio entre repeticoes.")) +
+  tema_pacote()
+```
+
+## A decisao
+
+O erro de leitura que este capitulo existe para impedir tem nome: **comparar
+motores por AIC e chamar isso de comparacao de modelos**. AIC e BIC medem
+ajuste com penalidade, e a penalidade so faz sentido dentro de uma familia de
+modelos com o mesmo criterio de contagem de parametros; R2 fora de amostra mede
+previsao. No cenario C, o AIC separa os dois motores que ele consegue avaliar e
+nao diz nada sobre os outros dois, e a tabela de previsao cobre os quatro, com
+numero e com incerteza.
+
+A decisao do livro e: **use `mr_compare()$inference` para escolher entre modelos
+da mesma familia, com numero de parametros comparavel, e use
+`mr_compare()$prediction` para tudo o que cruza familias, inclusive os motores
+cujo AIC e `NA`**. E nao use nenhum dos dois para responder a pergunta do outro.
+
+```{r}
+#| label: c08-fechar
+r2_linear08 <- as.numeric(wide08$R2[wide08$model == "linear"])
+r2_gam08 <- as.numeric(wide08$R2[wide08$model == "gam"])
+r2_kernel08 <- as.numeric(wide08$R2[wide08$model == "kernel"])
+r2_robust08 <- as.numeric(wide08$R2[wide08$model == "robust"])
+salvar_uso("08")
+salvar_decisoes("08",
+  paste("Comparar motores pela tabela de previsao de mr_compare(), reservar a",
+        "tabela de inferencia para modelos da mesma familia, e isolar o",
+        "gerador com preservando_semento() em toda repeticao."),
+  paste("Em mr_compare()$inference, AIC e BIC saem NA para os motores robust e",
+        "kernel, e a coluna note da tabela de previsao e NA em todas as",
+        nrow(cmp08$prediction), "linhas, sem nenhuma explicacao. No cenario C,",
+        "o R2 fora de amostra foi", fmt(r2_linear08, 4), "para o ols e",
+        fmt(r2_gam08, 4), "para o gam, um ganho de",
+        fmt(r2_gam08 - r2_linear08, 4), "que so a tabela de previsao mostra,",
+        "enquanto o robust, cujo AIC e NA, ficou em", fmt(r2_robust08, 4),
+        "e o kernel em", fmt(r2_kernel08, 4),
+        ". O teste de sequestro do gerador deu diferente do controle em",
+        sum(hijack_08), "das", length(hijack_08),
+        "chamadas do pacote testadas, e o mr_select com metodo aic nao",
+        "sequestrou."))
+```

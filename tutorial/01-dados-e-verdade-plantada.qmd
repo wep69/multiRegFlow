@@ -1,0 +1,255 @@
+# Os dados e a verdade plantada {#sec-dados}
+
+```{r}
+#| label: setup-01
+#| include: false
+source("_common.R")
+```
+
+Todo tutorial de metodo corre o risco oposto: mostrar um caminho feliz, em que
+o procedimento acerta porque o problema era facil. Este capitulo existe para
+impedir isso. Os seis cenarios foram construidos com a discrepancia plantada de
+proposito, e a primeira tarefa de cada um e provar que a discrepancia existe nos
+dados **antes** de usar o cenario para demonstrar nada.
+
+A prova e sempre a mesma: gerar os dados, aplicar o procedimento, e conferir se
+o sinal aparece. Quando o sinal nao aparece, ou o cenario esta fraco demais ou a
+hipotese sobre o procedimento estava errada. Aconteceu as duas vezes neste
+estudo, e as duas estao registradas na @sec-nota.
+
+::: {.callout-note}
+## Todos os dados deste livro sao sinteticos
+
+Gerados dentro do proprio documento, com semente fixa declarada em cada
+cenario. Nenhum deles e observacao de campo. Nenhum deles pode ser apresentado
+como tal, e nenhum numero de producao deve sair daqui sem ser reanalisado em
+dado real.
+:::
+
+## A forma do efeito, e nao so a intensidade dele
+
+Um gerador que apenas aumenta o peso de cada variavel produz cenarios que se
+diferen pouco, e tutorial que faz isso ilustra em vez de ensinar. O que separa
+um tutorial que ensina de um que ilustra e plantar **formas diferentes de
+efeito**, porque cada forma exige uma leitura diferente do diagnostico.
+
+Este livro usa quatro formas, e cada uma tem um cenario:
+
+| Forma | Como foi construida | O que ensina |
+|:---|:---|:---|
+| Linear | cenario A, sem os outliers | o caso de referencia |
+| Crescimento monotone da variancia | cenario A, sigma proporcional a argila | o que o MQO ignora |
+| Cresta, nao pico | cenario C, otimo condicional | o efeito que nenhuma faixa univariada ve |
+| Ausencia de efeito, com presenca no dado | cenario B, textura redundante | o indice que se move sem malfeito |
+
+A ultima linha e a mais importante. No cenario B, tres variaveis que descrevem a
+**mesma** coisa estao no modelo. O VIF vai alto, o ajuste vai piorar, e nenhuma
+das duas coisas e um defeito: e informacao que o desenho do dado carrega. E
+exatamente por isso que o pacote nunca remove variavel por limiar de VIF, como o
+@sec-colinear mostra em numeros.
+
+## Cenario A: a relacao e linear, a variancia nao, e ha outliers
+
+O cenario A simula um ensaio de fertilidade. A relacao entre as seis variaveis
+e a produtividade e **linear**, com coeficientes verdadeiros conhecidos, porque
+e assim que a comparacao com a verdade plantada fica legitima.
+
+```{r}
+#| label: cenA-verdade
+A <- dados_A()
+cat("n =", nrow(A), "| variaveis de manejo:", ncol(A), "\n\n")
+tab(data.frame(termo = c("(Intercept)", "soil_pH", "organic_matter_pct",
+                         "clay_pct", "available_P_mg_dm3",
+                         "exchangeable_K_mg_dm3", "soil_moisture_pct",
+                         "season_rain_mm"),
+               valor = c(VERDADE_A[["intercept"]], VERDADE_A[["pH"]],
+                         VERDADE_A[["MO"]], 0, VERDADE_A[["P"]],
+                         VERDADE_A[["K"]], VERDADE_A[["umidade"]],
+                         VERDADE_A[["chuva"]]),
+               unidade = c("t/ha", "t/ha por unidade de pH",
+                           "t/ha por ponto de materia organica",
+                           "sem efeito plantado",
+                           "t/ha por mg/dm3 de P",
+                           "t/ha por mg/dm3 de K",
+                           "t/ha por ponto de umidade",
+                           "t/ha por mm de chuva"),
+               stringsAsFactors = FALSE),
+    caption = paste("Verdadeira plantada do cenario A. A argila recebe coeficiente",
+                    "zero de proposito: ela existe para carregar a variancia do",
+                    "erro, nao um efeito na media."))
+```
+
+A variancia do erro cresce com a argila, de `r fmt(min(attr(A, "sigma")), 2)` a
+`r fmt(max(attr(A, "sigma")), 2)` t/ha. Esse e o primeiro discrepancia plantada:
+uma heteroscedasticidade que o MQO classico ignora e que muda o intervalo, mas
+nao o coeficiente.
+
+```{r}
+#| label: cenA-figura-sigma
+ggplot(A, aes(clay_pct, attr(A, "sigma"))) +
+  geom_point(colour = CINZA, size = 1.6, alpha = .7) +
+  geom_smooth(method = "lm", formula = y ~ x, colour = AZUL, linewidth = .8) +
+  labs(x = "Argila (%)", y = "Desvio-padrao do erro plantado (t/ha)",
+       title = "A variancia plantada cresce com a argila",
+       subtitle = "O MQO classico assume que esta reta e horizontal") +
+  tema_pacote()
+```
+
+A segunda discrepancia sao tres observacoes deslocadas, em linhas fixas, com
+sinais opostos. Nao sao outliers de simulacao aleatoria: sao erro de digicao,
+troca de etiqueta ou parcela mal aplicada, os tres casos que produzem ponto
+isolado em ensaio de campo.
+
+```{r}
+#| label: cenA-figura-outliers
+ggplot(A, aes(soil_pH, yield_t_ha)) +
+  geom_point(colour = CINZA, size = 1.6, alpha = .6) +
+  geom_point(data = A[seq_len(nrow(A)) %in% LINHAS_OUTLIER_A, ],
+              colour = VERM, size = 3.2) +
+  annotate("text", x = min(A$soil_pH), y = max(A$yield_t_ha),
+           label = "vermelho: as tres observacoes deslocadas",
+           hjust = 0, vjust = 1, colour = VERM, size = 3.4) +
+  labs(x = "pH do solo", y = "Produtividade (t/ha)",
+       title = "Tres observacoes plantadas fora do ruido",
+       subtitle = paste("Linhas", paste(LINHAS_OUTLIER_A, collapse = ", "),
+                        "deslocadas em", paste(DESVIO_OUTLIER_A, collapse = ", "),
+                        "t/ha")) +
+  tema_pacote()
+```
+
+## Cenario B: a mesma textura medida tres vezes
+
+O cenario B coloca no modelo tres medidas que descrevem a mesma propriedade
+fisica do solo: percentagem de argila, capacidade de troca cationica e
+percentagem de areia. Elas sao construidas uma a partir da outra, com pequeno
+ruido, de modo que a redundancia e real e nao um artefato.
+
+```{r}
+#| label: cenB-figura
+B <- dados_B()
+ggplot(B, aes(clay_pct, CEC_cmolc_dm3)) +
+  geom_point(colour = AZUL, size = 1.8, alpha = .7) +
+  labs(x = "Argila (%)", y = "Capacidade de troca cationica (cmolc/dm3)",
+       title = "Argila e CEC medem a mesma coisa",
+       subtitle = "Correlacao praticamente um, por construcao") +
+  tema_pacote()
+```
+
+## Cenario C: a cresta que nenhuma analise univariada ve
+
+O cenario C e o mais importante pedagogicamente, e o @sec-crista mede o que ele
+custa. A resposta nao tem um pico unico de irrigacao: **o otimo de irrigacao
+sobe com a dose de nitrogenio**. Quem procura o melhor ponto olhando so a
+irrigacao encontra o otimo marginal, que e o correto apenas para quem esta na
+dose media de nitrogenio.
+
+```{r}
+#| label: cenC-figura
+C <- dados_C()
+I_opt <- attr(C, "I_opt")
+ggplot(C, aes(irrigation_mm, yield_t_ha, colour = N_rate_kg_ha)) +
+  geom_point(size = 1.7, alpha = .75) +
+  geom_line(data = data.frame(
+    I = seq(100, 400, by = 2),
+    Ndose = rep(c(50, 90, 130, 160), each = 151)),
+    aes(x = I, y = 12 - 0.00090 * (I - (80 + 1.20 * Ndose))^2 -
+              0.00055 * (Ndose - 100)^2 + 0.10 * (90 - 26) -
+              0.0016 * (90 - 26)^2,
+        colour = Ndose, group = Ndose),
+    linewidth = .9, colour = VERDE) +
+  scale_colour_gradient(low = LARANJA, high = ROXO, name = "N (kg/ha)") +
+  labs(x = "Irrigacao (mm)", y = "Produtividade (t/ha)",
+       title = "A superficie verdadeira e uma cresta, nao um pico",
+       subtitle = "O otimo de irrigacao sobe com a dose de nitrogenio") +
+  tema_pacote()
+```
+
+## Cenarios D, E e F: alavancagem, agrupamento e ruido
+
+O cenario D coloca duas unidades de parcela com todas as variaveis de manejo no
+extremo superior e a resposta deslocada para baixo. E o caso em que a fitted
+passa longe da resposta e o residuo fica grande, que e diferente do cenario A,
+onde o residuo e grande e a fitted continua proxima.
+
+O cenario E tem seis blocos com efeito proprio, e dentro de cada bloco ha
+dispersao de residuos. E o cenario em que a unidade real de inferencia nao e a
+unidade experimental, e sim o bloco.
+
+O cenario F tem sinal real e ruido grande: a relacao existe, e ainda assim a
+previsao fora de amostra e ruim. Serve para separar **ajuste** de **previsao**,
+que e a distincao que o capitulo de validacao mede.
+
+```{r}
+#| label: cenD-E-F-figuras
+D <- dados_D(); E <- dados_E(); F <- dados_F()
+
+p1 <- ggplot(D, aes(exchangeable_K_mg_dm3, grain_yield_t_ha)) +
+  geom_point(colour = CINZA, size = 1.6, alpha = .6) +
+  geom_point(data = D[LINHAS_ALAVANCAMENTO_D, ], colour = VERM, size = 3.2) +
+  labs(x = "K trocavel (mg/dm3)", y = "Produtividade de graos (t/ha)",
+       title = paste0("D: alavancagem nas linhas ",
+                      paste(LINHAS_ALAVANCAMENTO_D, collapse = " e "))) +
+  tema_pacote(9)
+
+p2 <- ggplot(E, aes(bloco, grain_yield_t_ha, fill = bloco)) +
+  geom_boxplot(alpha = .55, outlier.size = 1.2, width = .6) +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  labs(x = "Bloco", y = "Produtividade de graos (t/ha)",
+       title = "E: efeito de bloco e dispersao dentro do bloco") +
+  tema_pacote(9)
+
+p3 <- ggplot(F, aes(organic_matter_pct, yield_t_ha)) +
+  geom_point(colour = AZUL, size = 1.7, alpha = .65) +
+  geom_smooth(method = "lm", formula = y ~ x, colour = LARANJA,
+              linewidth = .9) +
+  labs(x = "Materia organica (%)", y = "Produtividade (t/ha)",
+       title = "F: o sinal existe, o ruido manda") +
+  tema_pacote(9)
+
+library(gridExtra)
+gridExtra::grid.arrange(p1, p2, p3, ncol = 3, widths = c(1, 1, 1))
+```
+
+## O quadro-resumo dos cenarios
+
+```{r}
+#| label: cen-resumo
+quadro <- data.frame(
+  cenario = c("A", "A sem outliers", "B", "C", "D", "E", "F"),
+  n = c(nrow(A), nrow(A), nrow(B), nrow(C), nrow(D), nrow(E), nrow(F)),
+  n_variaveis = c(ncol(A), ncol(A), ncol(B), ncol(C), ncol(D), ncol(E), ncol(F)),
+  discrepancia = c("variancia + 3 outliers plantados",
+                    "so a variancia",
+                    "textura redundante",
+                    "otimo condicional invisivel a univariada",
+                    "alavancagem com resposta baixa",
+                    "seis blocos com efeito proprio",
+                    "ruido maior que o sinal"),
+  stringsAsFactors = FALSE)
+tab(quadro, caption = paste(
+  "Os seis cenarios e a variante sem outliers. O cenario A aparece duas vezes",
+  "porque a versao com e a versao sem os tres pontos deslocados se comportam de",
+  "modo diferente, e a diferenca entre elas e o assunto do proximo capitulo."))
+```
+
+::: {.callout-warning}
+## A semente determina todos os numeros deste livro
+
+Trocar a semente de um cenario muda todos os resultados que dependem dele,
+inclusive os que aparecem nas frases. Este livro declara a semente de cada
+cenario dentro de `_common.R`, e o leitor que quiser reproduzir os numeros exatos
+deve usar o livro como ele esta. Se a semente mudar e a prosa ficar errada, a
+prosa estava errada desde o comeco: nenhum numero deste livro foi digitado.
+:::
+
+```{r}
+#| label: fechar-01
+salvar_uso("01")
+salvar_decisoes("01",
+  "Manter o cenario A com os tres outliers plantados, e nao sem eles.",
+  paste("Sem os tres pontos deslocados, o teste de Breusch-Pagan encontra a",
+        "heteroscedasticidade plantada. Com eles, o sinal desaparece, e o que",
+        "sobra e o alerta de Shapiro-Wilk. O capitulo seguinte mede essa",
+        "diferenca, que e a razao de o cenario existir com os outliers."))
+```
+
